@@ -1,0 +1,10 @@
+<view wx:if="{{loading}}" class="card"><text class="label">加载中…</text></view>
+<view wx:elif="{{error}}" class="card"><text>{{error}}</text></view>
+<view wx:else class="card">
+  <text class="label">我的明细</text>
+  <view wx:for="{{events}}" wx:key="_id" class="event">
+    <text>{{item.effectiveDate}} · {{item.eventType}}</text>
+    <text>{{item.amount}}</text>
+  </view>
+  <text wx:if="{{events.length === 0}}" class="label">暂无记录</text>
+</view>

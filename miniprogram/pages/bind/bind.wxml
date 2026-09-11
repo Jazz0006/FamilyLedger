@@ -1,0 +1,7 @@
+<view class="card">
+  <text class="label">首次绑定</text>
+  <view wx:if="{{displayName}}" class="amount-hero">{{displayName}}</view>
+  <text wx:else>这是你的家庭借款账户</text>
+  <text wx:if="{{error}}">{{error}}</text>
+  <button class="btn-primary" bindtap="confirm" disabled="{{loading}}">确认是我</button>
+</view>

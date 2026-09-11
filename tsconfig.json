@@ -1,0 +1,8 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/calc" },
+    { "path": "cloud/functions/ledger" }
+  ]
+}

@@ -1,0 +1,17 @@
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 24rpx;
+}
+.row .label {
+  margin-right: 12rpx;
+}
+.total {
+  font-weight: 700;
+  border-top: 2rpx solid #eee;
+  padding-top: 24rpx;
+}
+button {
+  margin-top: 32rpx;
+}

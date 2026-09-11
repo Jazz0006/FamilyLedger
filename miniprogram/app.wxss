@@ -1,0 +1,39 @@
+/* Global, elder-friendly styling: large type, high contrast, generous spacing. */
+page {
+  background: #f5f5f7;
+  color: #1a1a1a;
+  font-size: 32rpx;
+  line-height: 1.5;
+}
+
+.card {
+  background: #ffffff;
+  border-radius: 20rpx;
+  padding: 40rpx;
+  margin: 24rpx;
+  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.04);
+}
+
+.amount-hero {
+  font-size: 88rpx;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.label {
+  font-size: 28rpx;
+  color: #888888;
+}
+
+.btn-primary {
+  background: #07c160;
+  color: #ffffff;
+  font-size: 34rpx;
+  border-radius: 16rpx;
+}
+
+.btn-secondary {
+  background: #f0f0f0;
+  color: #333333;
+  border-radius: 16rpx;
+}

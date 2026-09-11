@@ -1,0 +1,19 @@
+{
+  "miniprogramRoot": "./",
+  "projectname": "FamilyLedger",
+  "description": "家庭借款账本",
+  "appid": "touristappid",
+  "setting": {
+    "urlCheck": true,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "newFeature": true,
+    "nodeModules": false
+  },
+  "compileType": "miniprogram",
+  "cloudfunctionRoot": "../cloud/functions/",
+  "libVersion": "latest",
+  "condition": {}
+}

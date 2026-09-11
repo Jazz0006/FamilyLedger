@@ -1,0 +1,12 @@
+<view wx:if="{{loading}}" class="card"><text class="label">加载中…</text></view>
+<view wx:elif="{{error}}" class="card"><text>{{error}}</text></view>
+<block wx:else>
+  <view wx:for="{{requests}}" wx:key="_id" class="card">
+    <text class="label">待确认</text>
+    <view class="amount-hero">{{item.amount}}</view>
+    <text>{{item.type}} · 生效日 {{item.proposedEffectiveDate}}</text>
+    <button class="btn-primary" data-id="{{item._id}}" data-approve="true" bindtap="decide">{{item.confirmLabel}}</button>
+    <button class="btn-secondary" data-id="{{item._id}}" data-approve="false" bindtap="decide">不同意</button>
+  </view>
+  <view wx:if="{{requests.length === 0}}" class="card"><text class="label">暂无待确认操作</text></view>
+</block>

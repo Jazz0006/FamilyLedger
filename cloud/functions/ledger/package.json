@@ -1,0 +1,16 @@
+{
+  "name": "@family-ledger/cloud-ledger",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "tsc --build --clean"
+  },
+  "dependencies": {
+    "@family-ledger/calc": "0.1.0",
+    "@family-ledger/shared": "0.1.0",
+    "@cloudbase/node-sdk": "^3.9.0"
+  }
+}
