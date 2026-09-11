@@ -84,6 +84,13 @@ export interface LoanEvent {
   createdBy: string;
   confirmedBy: string;
   createdAt: EpochMillis;
+  /**
+   * Dedupe guard. For confirmation-gated events this equals the source
+   * request's idempotencyKey; for direct admin events (PRINCIPAL_ADD,
+   * RATE_CHANGE) it is the client-supplied key. A unique index on this field
+   * prevents double-tap / retry from inserting a second event (spec §15).
+   */
+  idempotencyKey: string;
   /** For forward migration safety. */
   schemaVersion: number;
 }

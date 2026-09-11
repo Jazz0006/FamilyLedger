@@ -19,3 +19,6 @@ export const LEDGER_TIMEZONE = 'Asia/Shanghai';
 
 /** Currency. V1 is single-currency (spec §21 defers multi-currency). */
 export const CURRENCY = 'CNY';
+
+/** Current loan_events schema version, stamped on every new event (spec §12). */
+export const LOAN_EVENT_SCHEMA_VERSION = 1;

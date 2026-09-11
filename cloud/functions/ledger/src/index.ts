@@ -1,5 +1,7 @@
 import { buildContext } from './context.js';
 import { AppError, ErrorCode, type ApiResponse } from './errors.js';
+import { CloudBaseRepo } from './data/cloudbase-repo.js';
+import { makeActionContext } from './actions/action-context.js';
 import { getHomeSummary } from './actions/getHomeSummary.js';
 import { bindInvite, type BindInviteInput } from './actions/bindInvite.js';
 import {
@@ -31,7 +33,12 @@ export async function main(
   fnContext: unknown,
 ): Promise<ApiResponse<unknown>> {
   try {
-    const ctx = buildContext(fnContext);
+    const call = buildContext(fnContext);
+    const ctx = makeActionContext({
+      repo: new CloudBaseRepo(call.db),
+      openid: call.openid,
+      now: call.now,
+    });
     const { action, payload } = event ?? {};
 
     switch (action) {

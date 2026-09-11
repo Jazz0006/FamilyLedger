@@ -3,7 +3,7 @@ import {
   Collections,
   LoanEventType,
 } from '@family-ledger/shared';
-import type { CallContext } from '../context.js';
+import type { ActionContext } from './action-context.js';
 
 export interface ConfirmChangeInput {
   changeRequestId: string;
@@ -45,7 +45,7 @@ export interface ConfirmChangeResult {
  * TODO(impl): implement the compare-and-set state machine described above.
  */
 export async function confirmChange(
-  ctx: CallContext,
+  ctx: ActionContext,
   input: ConfirmChangeInput,
 ): Promise<ConfirmChangeResult> {
   void ctx;

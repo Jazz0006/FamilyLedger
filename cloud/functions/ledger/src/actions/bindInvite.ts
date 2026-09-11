@@ -1,5 +1,5 @@
 import { Collections } from '@family-ledger/shared';
-import type { CallContext } from '../context.js';
+import type { ActionContext } from './action-context.js';
 
 export interface BindInviteInput {
   /** The raw one-time token from the invite link. Server hashes to compare. */
@@ -29,7 +29,7 @@ export interface BindInviteResult {
  * TODO(impl): implement hashing + atomic single-use per above.
  */
 export async function bindInvite(
-  ctx: CallContext,
+  ctx: ActionContext,
   input: BindInviteInput,
 ): Promise<BindInviteResult> {
   void ctx;

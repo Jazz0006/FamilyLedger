@@ -2,7 +2,7 @@
   "miniprogramRoot": "./",
   "projectname": "FamilyLedger",
   "description": "家庭借款账本",
-  "appid": "touristappid",
+  "appid": "wxa6b778821b3ccbc9",
   "setting": {
     "urlCheck": true,
     "es6": true,

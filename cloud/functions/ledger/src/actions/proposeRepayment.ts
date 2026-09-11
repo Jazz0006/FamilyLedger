@@ -3,7 +3,7 @@ import {
   Collections,
   type Fen,
 } from '@family-ledger/shared';
-import type { CallContext } from '../context.js';
+import type { ActionContext } from './action-context.js';
 
 export interface ProposeRepaymentInput {
   loanId: string;
@@ -36,7 +36,7 @@ export interface ProposeRepaymentResult {
  * TODO(impl).
  */
 export async function proposeRepayment(
-  ctx: CallContext,
+  ctx: ActionContext,
   input: ProposeRepaymentInput,
 ): Promise<ProposeRepaymentResult> {
   void ctx;
