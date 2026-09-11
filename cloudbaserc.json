@@ -1,7 +1,7 @@
 {
   "$schema": "https://framework-1258016615.tcloudbaseapp.com/schema/latest.json",
   "version": "2.0",
-  "envId": "REPLACE_WITH_YOUR_ENV_ID",
+  "envId": "cloudbase-d4gza0wljf6505629",
   "functionRoot": "cloud/functions",
   "functions": [
     {

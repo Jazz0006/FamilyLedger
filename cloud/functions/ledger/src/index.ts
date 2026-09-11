@@ -23,6 +23,7 @@ import {
   type ProposeRepaymentInput,
 } from './actions/proposeRepayment.js';
 import { confirmChange, type ConfirmChangeInput } from './actions/confirmChange.js';
+import { setupCollections } from './actions/setupCollections.js';
 
 /**
  * Single router-style cloud function. The miniprogram calls
@@ -52,6 +53,10 @@ export async function main(
     const { action, payload } = event ?? {};
 
     switch (action) {
+      // One-time infra bootstrap: needs the raw db handle, runs before any
+      // admin/collections exist, so it takes `call` not `ctx`.
+      case 'setupCollections':
+        return ok(await setupCollections(call));
       case 'getHomeSummary':
         return ok(await getHomeSummary(ctx));
       case 'bootstrapAdmin':
