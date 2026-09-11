@@ -7,11 +7,16 @@
   "scripts": {
     "build": "tsc --build",
     "clean": "tsc --build --clean",
-    "test": "vitest run"
+    "test": "vitest run",
+    "bundle": "node scripts/bundle.mjs"
   },
   "dependencies": {
     "@family-ledger/calc": "0.1.0",
     "@family-ledger/shared": "0.1.0",
     "@cloudbase/node-sdk": "^3.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "esbuild": "^0.21.5"
   }
 }

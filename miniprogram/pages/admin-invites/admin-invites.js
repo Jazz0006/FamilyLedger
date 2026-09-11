@@ -1,28 +1,41 @@
 const { callLedger } = require('../../utils/api.js');
 
-// 邀请管理 (spec §17): 曾骏 创建 / 重发一次性邀请。
+// 邀请管理 (spec §17): 曾骏 为新家庭成员创建一次性邀请。
+// 采用 auto-create-on-bind：管理员输入称呼创建邀请，家人点击“确认是我”后
+// 才自动创建其账户与借款关系。服务端只存 token 哈希 (spec §15)。
 Page({
-  data: { loading: false, error: '', members: [] },
-
-  onShow() {
-    this.load();
+  data: {
+    displayName: '',
+    creating: false,
+    error: '',
+    // The most recently created invite link, shown once for sharing.
+    inviteLink: '',
   },
 
-  async load() {
-    this.setData({ loading: true, error: '' });
+  onNameInput(e) {
+    this.setData({ displayName: e.detail.value });
+  },
+
+  async createInvite() {
+    const name = (this.data.displayName || '').trim();
+    if (!name) {
+      this.setData({ error: '请先输入称呼，例如“妈妈”' });
+      return;
+    }
+    this.setData({ creating: true, error: '', inviteLink: '' });
     try {
-      const res = await callLedger('listMembers');
-      this.setData({ loading: false, members: res.members || [] });
+      const res = await callLedger('createInvite', { displayName: name });
+      // The raw token is returned once; build a shareable path for the bind
+      // page. In practice this becomes a miniprogram link / QR the family
+      // member opens. Shown here so the admin can copy it.
+      const link = `/pages/bind/bind?token=${encodeURIComponent(res.rawToken)}`;
+      this.setData({ creating: false, inviteLink: link, displayName: '' });
     } catch (err) {
-      this.setData({ loading: false, error: err.message || '加载失败' });
+      this.setData({ creating: false, error: err.message || '创建失败' });
     }
   },
 
-  // TODO(impl): 'createInvite' returns a one-time token; server stores only its
-  // hash (spec §15). Present a shareable invite path/QR for the family member.
-  createInvite(e) {
-    const { userid } = e.currentTarget.dataset;
-    void userid;
-    this.setData({ error: '尚未实现：创建邀请（待接入 createInvite）' });
+  copyLink() {
+    wx.setClipboardData({ data: this.data.inviteLink });
   },
 });

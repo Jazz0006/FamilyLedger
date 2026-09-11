@@ -4,14 +4,22 @@ const { callLedger } = require('../../utils/api.js');
 Page({
   data: { token: '', displayName: '', loading: true, error: '', bound: false },
 
-  onLoad(query) {
+  async onLoad(query) {
     // The invite link carries a one-time token as a query param.
     const token = query.token || (query.scene ? decodeURIComponent(query.scene) : '');
     this.setData({ token });
-    // TODO(impl): optionally pre-fetch the invited displayName for confirmation
-    // via a read-only "previewInvite" action so the screen can show
-    // “这是你的家庭借款账户：妈妈/爸爸/姐姐”.
-    this.setData({ loading: false });
+    // Read-only preview so the screen can show
+    // “这是你的家庭借款账户：妈妈/爸爸/姐姐” before the user confirms.
+    try {
+      const preview = await callLedger('previewInvite', { token });
+      this.setData({
+        displayName: preview.displayName,
+        error: preview.valid ? '' : '邀请无效或已过期',
+        loading: false,
+      });
+    } catch (err) {
+      this.setData({ loading: false, error: err.message || '邀请无效' });
+    }
   },
 
   async confirm() {

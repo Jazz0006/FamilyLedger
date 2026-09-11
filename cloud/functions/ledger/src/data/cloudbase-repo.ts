@@ -1,6 +1,8 @@
 import {
   Collections,
+  UserRole,
   type AuditLog,
+  type InviteToken,
   type LoanAccount,
   type LoanEvent,
   type User,
@@ -75,6 +77,65 @@ export class CloudBaseRepo implements LedgerRepo {
 
   async appendAudit(entry: Omit<AuditLog, '_id'>): Promise<void> {
     await this.db.collection(Collections.AUDIT_LOGS).add(entry);
+  }
+
+  async borrowerExists(): Promise<boolean> {
+    const res = await this.db
+      .collection(Collections.USERS)
+      .where({ role: UserRole.BORROWER })
+      .limit(1)
+      .get();
+    return (res.data ?? []).length > 0;
+  }
+
+  async createUserIfOpenidFree(
+    user: Omit<User, '_id'>,
+  ): Promise<{ user: User; created: boolean }> {
+    try {
+      const res = await this.db.collection(Collections.USERS).add(user);
+      const id = (res.id ?? res.ids?.[0]) as string;
+      return { user: { ...user, _id: id }, created: true };
+    } catch (err) {
+      // Unique index on users.openid rejected a second bind of this openid.
+      if (!isDuplicateKeyError(err)) throw err;
+      const existing = await this.first<User>(Collections.USERS, {
+        openid: user.openid,
+      });
+      if (!existing) throw err;
+      return { user: existing, created: false };
+    }
+  }
+
+  async createLoanAccount(
+    account: Omit<LoanAccount, '_id'>,
+  ): Promise<LoanAccount> {
+    const res = await this.db.collection(Collections.LOAN_ACCOUNTS).add(account);
+    const id = (res.id ?? res.ids?.[0]) as string;
+    return { ...account, _id: id };
+  }
+
+  async createInvite(invite: Omit<InviteToken, '_id'>): Promise<InviteToken> {
+    const res = await this.db.collection(Collections.INVITE_TOKENS).add(invite);
+    const id = (res.id ?? res.ids?.[0]) as string;
+    return { ...invite, _id: id };
+  }
+
+  getInviteByHash(tokenHash: string): Promise<InviteToken | null> {
+    return this.first<InviteToken>(Collections.INVITE_TOKENS, { tokenHash });
+  }
+
+  async consumeInvite(
+    inviteId: string,
+    usedAt: number,
+    consumedUserId: string,
+  ): Promise<boolean> {
+    // Compare-and-set: only update rows still unused. `updated` counts matched
+    // docs, so 1 => this caller won, 0 => already consumed (spec §7).
+    const res = await this.db
+      .collection(Collections.INVITE_TOKENS)
+      .where({ _id: inviteId, usedAt: null })
+      .update({ usedAt, consumedUserId });
+    return (res.updated ?? 0) > 0;
   }
 }
 

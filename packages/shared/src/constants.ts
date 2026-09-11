@@ -22,3 +22,14 @@ export const CURRENCY = 'CNY';
 
 /** Current loan_events schema version, stamped on every new event (spec §12). */
 export const LOAN_EVENT_SCHEMA_VERSION = 1;
+
+/**
+ * V1 is a single family (spec §4, §9). We use one fixed familyId rather than a
+ * families collection; multi-family is deferred. All scoping still goes through
+ * familyId so a future migration to multiple families is a data change, not a
+ * logic rewrite.
+ */
+export const DEFAULT_FAMILY_ID = 'family-default';
+
+/** One-time invite validity window: 7 days (spec §7 — tokens expire). */
+export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;

@@ -95,12 +95,27 @@ export interface LoanEvent {
   schemaVersion: number;
 }
 
+/**
+ * One-time first-bind invite (spec §7). We store only the token HASH, never the
+ * raw token (spec §15). With auto-create-on-bind, the invited user + loan
+ * account do not exist yet — the invite carries what's needed to create them
+ * when the family member taps "确认是我". `consumedUserId` records which user
+ * the (single) successful bind created.
+ */
 export interface InviteToken {
   _id: string;
-  targetUserId: string;
+  familyId: string;
+  /** Display name the invited member will see and be created with (妈妈/爸爸…). */
+  displayName: string;
+  /** Role the created account will have. V1 invites are for lenders. */
+  role: UserRole;
   tokenHash: string;
   expiresAt: EpochMillis;
   usedAt: EpochMillis | null;
+  /** The user account created by the successful bind, once consumed. */
+  consumedUserId: string | null;
+  createdBy: string;
+  createdAt: EpochMillis;
 }
 
 export interface AuditLog {

@@ -3,6 +3,16 @@ import { AppError, ErrorCode, type ApiResponse } from './errors.js';
 import { CloudBaseRepo } from './data/cloudbase-repo.js';
 import { makeActionContext } from './actions/action-context.js';
 import { getHomeSummary } from './actions/getHomeSummary.js';
+import {
+  bootstrapAdmin,
+  type BootstrapAdminInput,
+} from './actions/bootstrapAdmin.js';
+import {
+  createInvite,
+  previewInvite,
+  type CreateInviteInput,
+  type PreviewInviteInput,
+} from './actions/invites.js';
 import { bindInvite, type BindInviteInput } from './actions/bindInvite.js';
 import {
   recordLodgment,
@@ -44,6 +54,12 @@ export async function main(
     switch (action) {
       case 'getHomeSummary':
         return ok(await getHomeSummary(ctx));
+      case 'bootstrapAdmin':
+        return ok(await bootstrapAdmin(ctx, payload as BootstrapAdminInput));
+      case 'createInvite':
+        return ok(await createInvite(ctx, payload as CreateInviteInput));
+      case 'previewInvite':
+        return ok(await previewInvite(ctx, payload as PreviewInviteInput));
       case 'bindInvite':
         return ok(await bindInvite(ctx, payload as BindInviteInput));
       case 'recordLodgment':

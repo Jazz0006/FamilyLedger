@@ -1,0 +1,20 @@
+.name-input {
+  border: 2rpx solid #e0e0e0;
+  border-radius: 12rpx;
+  padding: 20rpx;
+  margin: 24rpx 0;
+}
+.error {
+  color: #e64340;
+  display: block;
+  margin-top: 16rpx;
+}
+.link {
+  display: block;
+  word-break: break-all;
+  color: #576b95;
+  margin: 16rpx 0;
+}
+button {
+  margin-top: 16rpx;
+}

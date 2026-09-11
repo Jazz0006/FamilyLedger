@@ -1,4 +1,5 @@
 import type {
+  InviteToken,
   LoanAccount,
   LoanEvent,
   User,
@@ -45,4 +46,36 @@ export interface LedgerRepo {
     detail?: string;
     serverTime: number;
   }): Promise<void>;
+
+  // --- Onboarding ---------------------------------------------------------
+
+  /** Does a BORROWER/admin already exist anywhere? Guards the bootstrap. */
+  borrowerExists(): Promise<boolean>;
+
+  /**
+   * Create a user IFF the openid is unused (unique index on users.openid).
+   * Returns the created user, or the existing one if that openid was already
+   * bound — making the bind idempotent and preventing one WeChat account from
+   * binding twice (spec §7).
+   */
+  createUserIfOpenidFree(
+    user: Omit<User, '_id'>,
+  ): Promise<{ user: User; created: boolean }>;
+
+  createLoanAccount(account: Omit<LoanAccount, '_id'>): Promise<LoanAccount>;
+
+  createInvite(invite: Omit<InviteToken, '_id'>): Promise<InviteToken>;
+
+  getInviteByHash(tokenHash: string): Promise<InviteToken | null>;
+
+  /**
+   * Atomically mark an invite consumed IFF it is still unused (compare-and-set
+   * on usedAt == null). Returns true if THIS caller won the race, false if it
+   * was already consumed. Guarantees one-time use under concurrency (spec §7).
+   */
+  consumeInvite(
+    inviteId: string,
+    usedAt: number,
+    consumedUserId: string,
+  ): Promise<boolean>;
 }
