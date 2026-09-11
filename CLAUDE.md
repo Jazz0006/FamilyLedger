@@ -5,7 +5,7 @@ Guidance for working in this repo.
 ## What this is
 
 家庭借款账本 — a WeChat Mini Program tracking transparent family loans. The
-authoritative spec is `docs/家庭借款账本_产品规划设计书_v1.0.md`. **The spec
+authoritative spec is `docs/家庭借款账本_产品规划设计书_v1.1.md`. **The spec
 wins over code.** Any change to money or permission semantics must update the
 spec (its §23 Definition of Done).
 
@@ -38,14 +38,23 @@ npm run build      # tsc project references: shared -> calc -> cloud
 npm test           # calc golden vectors (vitest)
 ```
 
-## Open product decisions (spec §21) — resolve before implementing money writes
+## Confirmation model (spec v1.1, Rule B) — direction-based
 
-- May lenders propose PRINCIPAL_ADD, or admin-only?
-- Repayment: settle interest first, or pure principal reduction? (affects math)
-- Backdated effective dates allowed?
+The single rule: **operations that INCREASE 曾骏's debt are admin-only and
+apply immediately; operations that DECREASE it require the lender to confirm.**
 
-The `proposeChange` / `confirmChange` cloud actions are intentionally stubbed
-(`NOT_IMPLEMENTED`) pending these decisions.
+| Operation | Initiator | Confirm? | Effective date |
+|---|---|---|---|
+| PRINCIPAL_ADD | admin | no | today |
+| RATE_CHANGE | admin | no | today |
+| PRINCIPAL_REPAY | admin | lender confirms | confirmation day |
+| CORRECTION | admin | only if it lowers the debt | — |
+
+So `change_requests` / the confirm flow exist ONLY for repayments (and
+debt-lowering corrections). Adds and rate changes are direct single-event
+inserts (still idempotent — guard double-taps). Known residual: a rate
+*decrease* technically disadvantages the lender but is admin-only for
+simplicity — accepted for a single trusted family.
 
 ## Development order (spec §19)
 

@@ -20,12 +20,14 @@ export interface ConfirmChangeResult {
 }
 
 /**
- * The counterparty confirms (or rejects) a PENDING change request (spec §10,
- * §13). This is the single most safety-critical operation.
+ * The lender confirms (or rejects) a PENDING repayment request (spec §10,
+ * §13). In v1.1 the only debt-decreasing operations flow through here
+ * (PRINCIPAL_REPAY, and any debt-lowering CORRECTION); adds and rate changes
+ * apply directly without confirmation. This is the most safety-critical op.
  *
  * Atomicity & idempotency (spec §13, §15):
- *  - Only the designated requiredConfirmer may confirm; caller verified server
- *    side, never trusting the client.
+ *  - Only the designated requiredConfirmer (the lender) may confirm; caller
+ *    verified server side, never trusting the client.
  *  - The PENDING -> APPLIED transition MUST be a conditional/compare-and-set
  *    update (update where status == PENDING). If it matches zero docs, another
  *    confirm already won — return the existing outcome, do NOT create a second

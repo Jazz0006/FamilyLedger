@@ -2,7 +2,14 @@ import { buildContext } from './context.js';
 import { AppError, ErrorCode, type ApiResponse } from './errors.js';
 import { getHomeSummary } from './actions/getHomeSummary.js';
 import { bindInvite, type BindInviteInput } from './actions/bindInvite.js';
-import { proposeChange, type ProposeChangeInput } from './actions/proposeChange.js';
+import {
+  recordLodgment,
+  type RecordLodgmentInput,
+} from './actions/recordLodgment.js';
+import {
+  proposeRepayment,
+  type ProposeRepaymentInput,
+} from './actions/proposeRepayment.js';
 import { confirmChange, type ConfirmChangeInput } from './actions/confirmChange.js';
 
 /**
@@ -32,8 +39,10 @@ export async function main(
         return ok(await getHomeSummary(ctx));
       case 'bindInvite':
         return ok(await bindInvite(ctx, payload as BindInviteInput));
-      case 'proposeChange':
-        return ok(await proposeChange(ctx, payload as ProposeChangeInput));
+      case 'recordLodgment':
+        return ok(await recordLodgment(ctx, payload as RecordLodgmentInput));
+      case 'proposeRepayment':
+        return ok(await proposeRepayment(ctx, payload as ProposeRepaymentInput));
       case 'confirmChange':
         return ok(await confirmChange(ctx, payload as ConfirmChangeInput));
       default:

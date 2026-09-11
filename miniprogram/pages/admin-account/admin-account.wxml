@@ -2,7 +2,7 @@
 <view wx:elif="{{error}}" class="card"><text>{{error}}</text></view>
 <block wx:else>
   <view class="card">
-    <button class="btn-primary" bindtap="proposeAdd">发起新增本金</button>
+    <button class="btn-primary" bindtap="recordLodgment">录入新增本金</button>
     <button class="btn-secondary" bindtap="proposeRepay">发起归还本金</button>
   </view>
   <view class="card">

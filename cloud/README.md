@@ -42,13 +42,16 @@ configured env id. Because the function imports workspace packages
 include their built `dist/` output — configure this in your `cloudbaserc.json`
 (not yet added; create it when you connect a real CloudBase env).
 
-## Open decisions blocking full implementation
+## Confirmation model (spec v1.1, Rule B)
 
-The action files contain `TODO(impl)` notes gated on spec §21:
+Direction-based: **debt-increasing ops are admin-only + immediate;
+debt-decreasing ops need lender confirmation.**
 
-- May lenders propose `PRINCIPAL_ADD`, or admin-only?
-- Does repayment settle interest first, or is it purely principal reduction?
-- Are backdated effective dates allowed?
+- `recordLodgment` (PRINCIPAL_ADD) — admin-only, direct single event, no
+  confirmation, effective today.
+- `proposeRepayment` (PRINCIPAL_REPAY) — admin creates a PENDING request;
+  `confirmChange` applies it when the lender confirms, effective that day.
+- Rate changes (RATE_CHANGE) — admin-only, direct (impl TODO).
 
-Resolve these (see spec §21) before implementing `proposeChange` /
-`confirmChange` money logic.
+The action files are still `NOT_IMPLEMENTED` stubs, but the flow and security
+boundary are now fixed by v1.1 — implement the money logic against them.

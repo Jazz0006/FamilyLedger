@@ -6,7 +6,7 @@ It is **not** a bank, deposit, or investment product — it records how much
 dual-party confirmation for every change.
 
 The authoritative product spec lives in
-[docs/家庭借款账本_产品规划设计书_v1.0.md](docs/家庭借款账本_产品规划设计书_v1.0.md).
+[docs/家庭借款账本_产品规划设计书_v1.1.md](docs/家庭借款账本_产品规划设计书_v1.1.md).
 When code and spec disagree, the spec wins — and any change to money or
 permission semantics must update the spec (see its §23 Definition of Done).
 
