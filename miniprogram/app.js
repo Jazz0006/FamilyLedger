@@ -1,4 +1,6 @@
 // 来往账 — WeChat Mini Program app shell.
+const { cloudbaseEnvId } = require('./config.js');
+
 App({
   onLaunch() {
     if (!wx.cloud) {
@@ -6,8 +8,9 @@ App({
       return;
     }
     wx.cloud.init({
-      // Use the CloudBase environment bound to this Mini Program.
-      env: wx.cloud.DYNAMIC_CURRENT_ENV,
+      // Mini Program client SDK expects an explicit environment ID. The AppID
+      // must be associated with this environment in CloudBase Security Settings.
+      env: cloudbaseEnvId,
       traceUser: true,
     });
   },
