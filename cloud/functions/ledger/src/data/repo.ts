@@ -36,8 +36,9 @@ export interface CreateResult<T> {
 }
 
 /**
- * Transaction-scoped persistence operations used by future request-application
- * actions. The transaction owns all reads/writes in one atomic business change.
+ * Transaction-scoped persistence operations used by request-application
+ * actions. All balance-sensitive reads that protect a formal mutation must use
+ * this snapshot rather than reading through the outer repository.
  */
 export interface LedgerTransaction {
   getRequest(requestId: string): Promise<LedgerRequest | null>;
@@ -45,6 +46,11 @@ export interface LedgerTransaction {
 
   getLoan(loanId: string): Promise<Loan | null>;
   createLoan(loan: NewLoan): Promise<Loan>;
+
+  listLoanEvents(params: {
+    loanId: string;
+    page: PageInput;
+  }): Promise<Page<LoanEvent>>;
 
   /**
    * Reserve contiguous event sequence numbers for one Loan. Sequence allocation
