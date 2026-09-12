@@ -46,6 +46,8 @@ export interface LedgerTransaction {
 
   getLoan(loanId: string): Promise<Loan | null>;
   createLoan(loan: NewLoan): Promise<Loan>;
+  /** Persist the typed Loan lifecycle projection inside the same business transaction. */
+  putLoan(loan: Loan): Promise<void>;
 
   listLoanEvents(params: {
     loanId: string;
