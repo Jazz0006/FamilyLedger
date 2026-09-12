@@ -35,11 +35,6 @@ type Db = CallContext['db'];
 type DbCommand = Db['command'];
 type DbCollection = ReturnType<Db['collection']>;
 
-/**
- * node-sdk 3.18.3 exposes runTransaction at runtime but its bundled declaration
- * leaves that member insufficiently typed. Keep the one compatibility cast at
- * this infrastructure boundary rather than leaking `any` through application code.
- */
 interface DbTransactionAdapter {
   collection(name: string): DbCollection;
 }
@@ -51,7 +46,6 @@ interface DbRunTransactionAdapter {
 }
 
 type LoanRecord = Loan & {
-  /** Infrastructure-only event sequence counter; never an accounting balance. */
   nextEventSequence: number;
 };
 
@@ -244,6 +238,38 @@ export class CloudBaseRepo implements LedgerRepo {
         { createdAt: cursor.createdAt, _id: _.lt(cursor._id) },
       );
       where = _.and(actionable, afterCursor) as object;
+    }
+
+    const response = await this.db
+      .collection(Collections.LEDGER_REQUESTS)
+      .where(where)
+      .orderBy('createdAt', 'desc')
+      .orderBy('_id', 'desc')
+      .limit(params.page.limit)
+      .get();
+    return pageFromCreatedAtRows(
+      extractRows<LedgerRequest>(response),
+      params.page.limit,
+    );
+  }
+
+  async listProposedPendingRequestsForUser(
+    params: Parameters<LedgerRepo['listProposedPendingRequestsForUser']>[0],
+  ): Promise<Page<LedgerRequest>> {
+    validatePageInput(params.page);
+    const _ = this.db.command;
+    const base = {
+      proposerUserId: params.userId,
+      status: LedgerRequestStatus.PENDING,
+    };
+
+    let where: object = base;
+    if (params.page.cursor) {
+      const cursor = decodeCreatedAtCursor(params.page.cursor);
+      where = _.or(
+        { ...base, createdAt: _.lt(cursor.createdAt) },
+        { ...base, createdAt: cursor.createdAt, _id: _.lt(cursor._id) },
+      ) as object;
     }
 
     const response = await this.db
