@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CURRENCY,
+  LEDGER_TIMEZONE,
   LOAN_EVENT_SCHEMA_VERSION,
   LedgerRequestStatus,
   LoanEventType,
@@ -16,6 +18,7 @@ import {
   getHomeSummary,
   getLoan,
   listLoanEvents,
+  listLoans,
   listPendingRequests,
 } from './readActions.js';
 import { deriveLoanSummaryFromRepo } from './read-model.js';
@@ -100,6 +103,19 @@ describe('R6 v2 read model', () => {
     expect(lenderView.summary.principalFen).toBe(100_000);
     expect(lenderView.summary.interestFen).toBe(0);
     expect(lenderView.summary.currentRate.annualEffectiveRate).toBe('0');
+
+    const lenderList = await listLoans(ctx(repo, 'alice'), {
+      direction: 'LENDER',
+      status: LoanStatus.ACTIVE,
+      limit: 10,
+    });
+    const borrowerList = await listLoans(ctx(repo, 'bob'), {
+      direction: 'BORROWER',
+      status: LoanStatus.ACTIVE,
+      limit: 10,
+    });
+    expect(lenderList.items[0]?.loan._id).toBe(created.applied.loan._id);
+    expect(borrowerList.items[0]?.loan._id).toBe(created.applied.loan._id);
   });
 
   it('lets one User be lender in one Loan and borrower in another home projection', async () => {
@@ -253,28 +269,27 @@ describe('R6 v2 read model', () => {
 
   it('does not include CLOSED Loans in active home totals', async () => {
     const repo = new MemoryRepo();
-    const created = await createFirstContactLoan({
-      repo,
-      proposerOpenid: 'alice',
-      claimantOpenid: 'bob',
-      unknownPartyRole: 'BORROWER',
-      principalFen: 10_000,
-      key: 'closed-loan',
-      tokenChar: 'G',
-    });
+    const lender = await createUser(repo, 'alice', 'Alice');
+    const borrower = await createUser(repo, 'bob', 'Bob');
 
-    // R8 will own the formal close mutation. For R6, seed only the operational
-    // Loan status needed to verify the read-model filtering rule.
-    const loan = created.applied.loan;
     await repo.runTransaction(async (tx) => {
-      const current = await tx.getLoan(loan._id);
-      if (!current) throw new Error('loan missing');
-      // MemoryRepo intentionally exposes no generic putLoan. Read-side filtering
-      // is therefore verified indirectly by creating no additional active Loan;
-      // the actual close-action test belongs to R8.
+      await tx.createLoan({
+        lenderUserId: lender._id,
+        borrowerUserId: borrower._id,
+        currency: CURRENCY,
+        ledgerTimezone: LEDGER_TIMEZONE,
+        createdFromRequestId: 'closed-seed-request',
+        status: LoanStatus.CLOSED,
+        createdAt: NOW - 10_000,
+        closedAt: NOW - 1_000,
+      });
     });
 
-    expect((await getHomeSummary(ctx(repo, 'alice'))).receivable.loanCount).toBe(1);
-    expect(loan.status).toBe(LoanStatus.ACTIVE);
+    const lenderHome = await getHomeSummary(ctx(repo, 'alice'));
+    const borrowerHome = await getHomeSummary(ctx(repo, 'bob'));
+    expect(lenderHome.receivable.loanCount).toBe(0);
+    expect(lenderHome.receivable.totalFen).toBe(0);
+    expect(borrowerHome.payable.loanCount).toBe(0);
+    expect(borrowerHome.payable.totalFen).toBe(0);
   });
 });
