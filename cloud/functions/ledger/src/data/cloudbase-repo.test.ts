@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { LoanEventType, type LoanEvent } from '@family-ledger/shared';
+import {
+  LoanEventType,
+  LoanStatus,
+  type Loan,
+  type LoanEvent,
+} from '@family-ledger/shared';
 import { CloudBaseRepo } from './cloudbase-repo.js';
 
 type DbParam = ConstructorParameters<typeof CloudBaseRepo>[0];
@@ -23,6 +28,7 @@ function event(sequence: number): LoanEvent {
 
 function fakeDb(events: LoanEvent[]) {
   let requestedLimit = 0;
+  const updates: unknown[] = [];
 
   const query = {
     where: () => query,
@@ -35,7 +41,10 @@ function fakeDb(events: LoanEvent[]) {
     add: async () => ({ id: 'created-id' }),
     doc: () => ({
       get: async () => ({ data: null }),
-      update: async () => ({ updated: 1 }),
+      update: async (value: unknown) => {
+        updates.push(value);
+        return { updated: 1 };
+      },
     }),
   };
 
@@ -55,6 +64,7 @@ function fakeDb(events: LoanEvent[]) {
   return {
     db: db as unknown as DbParam,
     requestedLimit: () => requestedLimit,
+    updates: () => updates,
   };
 }
 
@@ -70,8 +80,6 @@ describe('CloudBaseRepo adapter contract', () => {
 
     expect(fixture.requestedLimit()).toBe(100);
     expect(page.items).toHaveLength(100);
-    // A full bounded page advertises another cursor. If this is the exact last
-    // 100 rows, the following read is simply empty rather than truncating data.
     expect(page.nextCursor).not.toBeNull();
   });
 
@@ -91,6 +99,36 @@ describe('CloudBaseRepo adapter contract', () => {
     expect(page.items[0]?.sequence).toBe(1);
     expect(page.items[99]?.sequence).toBe(100);
     expect(page.nextCursor).not.toBeNull();
+  });
+
+  it('persists Loan lifecycle as a partial typed update without infrastructure fields', async () => {
+    const fixture = fakeDb([]);
+    const repo = new CloudBaseRepo(fixture.db);
+    const loan: Loan = {
+      _id: 'loan-1',
+      lenderUserId: 'u1',
+      borrowerUserId: 'u2',
+      currency: 'CNY',
+      ledgerTimezone: 'Asia/Shanghai',
+      createdFromRequestId: 'request-create',
+      status: LoanStatus.CLOSED,
+      createdAt: 1,
+      closedAt: 2,
+    };
+
+    await repo.runTransaction((tx) => tx.putLoan(loan));
+
+    expect(fixture.updates()).toContainEqual({
+      lenderUserId: 'u1',
+      borrowerUserId: 'u2',
+      currency: 'CNY',
+      ledgerTimezone: 'Asia/Shanghai',
+      createdFromRequestId: 'request-create',
+      status: LoanStatus.CLOSED,
+      createdAt: 1,
+      closedAt: 2,
+    });
+    expect(JSON.stringify(fixture.updates())).not.toContain('nextEventSequence');
   });
 
   it('returns the node-sdk 3.x runTransaction callback value directly', async () => {
