@@ -32,16 +32,21 @@ export function encodeCreatedAtCursor(value: CreatedAtCursor): string {
 }
 
 export function decodeCreatedAtCursor(cursor: string): CreatedAtCursor {
-  const value = decode(cursor) as Partial<CreatedAtCursor> & { kind?: unknown };
+  const value = decode(cursor) as {
+    kind?: unknown;
+    createdAt?: unknown;
+    _id?: unknown;
+  };
   if (
     value.kind !== 'createdAt' ||
+    typeof value.createdAt !== 'number' ||
     !Number.isFinite(value.createdAt) ||
     typeof value._id !== 'string' ||
     value._id.length === 0
   ) {
     throw new AppError(ErrorCode.VALIDATION_ERROR, 'Invalid createdAt pagination cursor');
   }
-  return { createdAt: value.createdAt as number, _id: value._id };
+  return { createdAt: value.createdAt, _id: value._id };
 }
 
 export function encodeSequenceCursor(sequence: number): string {
@@ -55,10 +60,11 @@ export function decodeSequenceCursor(cursor: string): number {
   const value = decode(cursor) as { kind?: unknown; sequence?: unknown };
   if (
     value.kind !== 'sequence' ||
+    typeof value.sequence !== 'number' ||
     !Number.isSafeInteger(value.sequence) ||
-    (value.sequence as number) < 0
+    value.sequence < 0
   ) {
     throw new AppError(ErrorCode.VALIDATION_ERROR, 'Invalid event sequence cursor');
   }
-  return value.sequence as number;
+  return value.sequence;
 }
