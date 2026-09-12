@@ -27,8 +27,15 @@
   font-size: 44rpx;
 }
 
-.create-button {
+.home-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16rpx;
   margin: 28rpx 0;
+}
+
+.home-actions button {
+  margin: 0;
 }
 
 .loan-row {
