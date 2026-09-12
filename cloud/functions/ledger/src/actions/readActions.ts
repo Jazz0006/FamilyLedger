@@ -41,6 +41,11 @@ export interface ActionableRequestView {
   otherParty: UserDisplayProfile;
 }
 
+export interface ProposedRequestView {
+  request: LedgerRequest;
+  otherParty: UserDisplayProfile | null;
+}
+
 function requireObjectOrEmpty(input: unknown, label: string): Record<string, unknown> {
   if (input == null) return {};
   if (typeof input !== 'object' || Array.isArray(input)) {
@@ -212,6 +217,27 @@ export async function listPendingRequests(
         otherParty: await requireUserDisplayProfile(ctx.repo, otherPartyId),
       };
     }),
+  );
+  return { items, nextCursor: page.nextCursor };
+}
+
+export async function listProposedRequests(
+  ctx: ActionContext,
+  input: unknown,
+): Promise<Page<ProposedRequestView>> {
+  const raw = requireObjectOrEmpty(input, 'listProposedRequests');
+  const actor = await requireCurrentUser(ctx);
+  const page = await ctx.repo.listProposedPendingRequestsForUser({
+    userId: actor._id,
+    page: pageInput(raw),
+  });
+  const items = await Promise.all(
+    page.items.map(async (request) => ({
+      request,
+      otherParty: request.counterpartyUserId
+        ? await requireUserDisplayProfile(ctx.repo, request.counterpartyUserId)
+        : null,
+    })),
   );
   return { items, nextCursor: page.nextCursor };
 }
