@@ -32,8 +32,23 @@ import type {
 } from './repo.js';
 
 type Db = CallContext['db'];
-type DbTransaction = Parameters<Parameters<Db['runTransaction']>[0]>[0];
 type DbCommand = Db['command'];
+type DbCollection = ReturnType<Db['collection']>;
+
+/**
+ * node-sdk 3.18.3 exposes runTransaction at runtime but its bundled declaration
+ * leaves that member insufficiently typed. Keep the one compatibility cast at
+ * this infrastructure boundary rather than leaking `any` through application code.
+ */
+interface DbTransactionAdapter {
+  collection(name: string): DbCollection;
+}
+
+interface DbRunTransactionAdapter {
+  runTransaction<T>(
+    work: (transaction: DbTransactionAdapter) => Promise<T>,
+  ): Promise<T>;
+}
 
 type LoanRecord = Loan & {
   /** Infrastructure-only event sequence counter; never an accounting balance. */
@@ -281,7 +296,8 @@ export class CloudBaseRepo implements LedgerRepo {
   async runTransaction<T>(
     work: (tx: LedgerTransaction) => Promise<T>,
   ): Promise<T> {
-    return this.db.runTransaction(async (transaction) =>
+    const dbWithTransactions = this.db as unknown as DbRunTransactionAdapter;
+    return dbWithTransactions.runTransaction(async (transaction) =>
       work(new CloudBaseTransaction(transaction, this.db.command)),
     );
   }
@@ -291,7 +307,7 @@ class CloudBaseTransaction implements LedgerTransaction {
   private readonly sequenceCache = new Map<string, number>();
 
   constructor(
-    private readonly transaction: DbTransaction,
+    private readonly transaction: DbTransactionAdapter,
     private readonly command: DbCommand,
   ) {}
 
