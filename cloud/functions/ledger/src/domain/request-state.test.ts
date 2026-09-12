@@ -50,6 +50,19 @@ describe('request state machine', () => {
     ).toBe(false);
   });
 
+  it.each([S.REJECTED, S.CANCELLED, S.EXPIRED])(
+    'allows first-contact PENDING -> %s before verification',
+    (to) => {
+      expect(
+        canTransitionRequestStatus({
+          from: S.PENDING,
+          to,
+          requiresInitiatorVerify: true,
+        }),
+      ).toBe(true);
+    },
+  );
+
   it.each([S.APPLIED, S.CANCELLED, S.EXPIRED])(
     'allows PENDING_INITIATOR_VERIFY -> %s',
     (to) => {
