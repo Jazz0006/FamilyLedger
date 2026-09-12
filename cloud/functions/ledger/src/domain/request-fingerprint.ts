@@ -55,9 +55,7 @@ function canonicalize(value: unknown): CanonicalJson {
     const result: Record<string, CanonicalJson> = {};
     for (const key of Object.keys(value as Record<string, unknown>).sort()) {
       const child = (value as Record<string, unknown>)[key];
-      if (child === undefined) {
-        continue;
-      }
+      if (child === undefined) continue;
       result[key] = canonicalize(child);
     }
     return result;
@@ -121,15 +119,19 @@ function semanticPayload(
     }
     case LedgerRequestType.CORRECTION: {
       const value = payload as CorrectionPayload;
-      return {
-        targetEventId: value.targetEventId,
-        principalDeltaFen: value.principalDeltaFen ?? null,
-        replacementRate: value.replacementRate
-          ? semanticRate(value.replacementRate)
-          : null,
-        proposedEffectiveDate: value.proposedEffectiveDate,
-        reason: value.reason ?? null,
-      };
+      return value.correctionKind === 'PRINCIPAL'
+        ? {
+            correctionKind: value.correctionKind,
+            targetEventId: value.targetEventId,
+            principalDeltaFen: value.principalDeltaFen,
+            reason: value.reason ?? null,
+          }
+        : {
+            correctionKind: value.correctionKind,
+            targetEventId: value.targetEventId,
+            replacementRate: semanticRate(value.replacementRate),
+            reason: value.reason ?? null,
+          };
     }
     case LedgerRequestType.CLOSE_LOAN: {
       const value = payload as CloseLoanPayload;
