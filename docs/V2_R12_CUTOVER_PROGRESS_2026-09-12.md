@@ -2,9 +2,9 @@
 
 ## Status
 
-R12 audit, R12A UI-facing server contract, and the first R12B Mini Program cutover slice are implemented on `codex/v2-r12-cutover-audit`.
+R12 audit, R12A UI-facing server contract, R12B active Mini Program cutover, and R12C Loan mutation proposal UI are implemented on `codex/v2-r12-cutover-audit`.
 
-R12 is **not production-complete**. R12C detail mutation proposal UI and R12D real CloudBase/two-account hardening remain.
+R12 is **not production-complete**. R12D real CloudBase / real WeChat two-account hardening remains a mandatory production gate.
 
 ## R12 audit result
 
@@ -47,11 +47,11 @@ The original proposer may cancel after an invitee claims the request but before 
 
 Regression coverage verifies that the claimant cannot perform that proposer-only cancellation and that verification cannot proceed after cancellation.
 
-## R12B completed so far
+## R12B completed
 
 ### Active Mini Program pages
 
-`app.json` now registers only:
+`app.json` registers only:
 
 ```text
 pages/home/home
@@ -68,8 +68,8 @@ All former `admin-*` page files were physically removed.
 - calls `ensureUser`;
 - renders “别人欠我的 / 我欠别人的” totals;
 - lists active Loans in both directions;
-- exposes pending count;
-- navigates to create/detail/confirm.
+- exposes actionable pending count;
+- keeps a permanent “待确认与已发起” entry so proposer-side pending requests remain discoverable.
 
 ### Create
 
@@ -86,14 +86,14 @@ For first contact, the raw bearer token is generated client-side from WeChat cry
 
 For unchanged network-error retries, the form preserves both the request idempotency key and invite raw token. Editing business fields clears that retry identity and starts a new logical mutation.
 
-### Detail
+### Detail baseline
 
 - participant-safe `getLoan` summary;
 - follows `listLoanEvents.nextCursor` through the complete formal history;
 - renders principal/rate/Correction/Close events;
 - never computes authoritative balance/interest client-side.
 
-### Confirm
+### Confirm baseline
 
 Explicitly distinguishes:
 
@@ -112,9 +112,67 @@ Normal pending requests can be rejected. A first-contact initiator verification 
 - invite acceptance binds runtime-authenticated claimant identity;
 - clearly states that acceptance alone does not create the formal Loan.
 
-## CI
+## R12C completed
 
-A repository GitHub Actions workflow now runs:
+### Loan-detail proposal panel
+
+The active Loan detail page now exposes proposal-only UI for:
+
+```text
+PRINCIPAL_REPAY
+PRINCIPAL_ADD
+RATE_CHANGE
+CORRECTION (PRINCIPAL)
+CORRECTION (RATE)
+CLOSE_LOAN
+```
+
+The client does not apply formal accounting effects. Every form creates a `LedgerRequest`; the server remains authoritative for permission, state transition, history reconstruction, event validation and formal append.
+
+### Retry semantics
+
+Each unchanged mutation form preserves one idempotency key across network retry. Editing a business field clears that key so a changed proposal becomes a new logical mutation.
+
+### Correction UX
+
+Principal Correction target options are derived only from principal-affecting formal events.
+
+Rate Correction target options are reduced to the current highest-sequence rate event for each effective date. The client does not submit a Correction effective date; the server derives it from the selected target event.
+
+The counterparty confirmation view loads the shared formal event history and shows the exact target event context before consent, including date/type/original value.
+
+### Close UX
+
+The Mini Program only enables the close proposal surface when the current projection has zero principal and no future formal event blocks the settlement boundary. Its date picker is constrained to the legal client-visible range.
+
+These are convenience checks only. Final close validity is always re-evaluated server-side inside the application transaction.
+
+The UI explicitly describes Close as a mutually confirmed settlement boundary, not an in-app payment.
+
+### Proposer pending-request visibility
+
+Added the read path:
+
+```text
+listProposedRequests
+```
+
+Backed by the existing `proposerUserId + status + createdAt + _id` request index shape.
+
+It returns only authenticated-user proposals still in `PENDING`, with a safe counterparty display profile when one is already bound. An unclaimed first-contact request remains displayable with no counterparty profile.
+
+The confirmation center now separates:
+
+```text
+待我处理
+我发起的 · 等待对方确认
+```
+
+The proposer can cancel their own still-PENDING requests. Regression coverage verifies that cancellation removes the request from this list.
+
+## CI checkpoint
+
+GitHub Actions runs:
 
 ```bash
 npm ci
@@ -123,35 +181,26 @@ npm run typecheck
 npm test
 ```
 
-A successful full-workspace checkpoint was recorded at `ce52a3621d36bc7d8ea9b8f2f33572e9e35543b9`, which already included the R12B client code, secure-token/retry behavior and first-contact cancellation regression. Later documentation commits still require their own current-head CI completion before that exact head is described as green.
+R12C code checkpoint `57d6626d2fabfbda07f007a985cfcb1245a9e83f` completed CI run #73 successfully.
 
-The install step currently reports dependency audit findings. They have not been force-fixed because the affected dependency chain must be identified before deciding whether a CloudBase SDK upgrade is appropriate.
+The authoritative roadmap update head `dc3924b60945afbeaebe5041b19c010b1878ed92` also completed CI run #74 successfully.
 
-## Deliberately not complete yet
+The install step has previously reported dependency audit findings. They have intentionally not been force-fixed; R12D should identify the affected dependency path before deciding whether a CloudBase SDK/dependency upgrade belongs in this release.
 
-### R12C — next
-
-The server supports the following proposals, but the Loan detail UI does not yet expose dedicated forms:
-
-- PRINCIPAL_REPAY;
-- PRINCIPAL_ADD;
-- RATE_CHANGE;
-- CORRECTION;
-- CLOSE_LOAN.
-
-R12C should add those proposal surfaces without moving any authority into the client.
-
-### R12D — required before production
+## R12D — required before production
 
 Still required against a real CloudBase/WeChat development environment:
 
-- collection/index provisioning verification;
-- runtime OPENID behavior;
-- actual transaction commit/rollback semantics;
-- duplicate-key/error shape verification;
-- concurrent invite claim/application races;
-- real share path behavior;
-- two-account first-contact and known-counterparty flows in both debt directions;
-- device-level end-to-end regression.
+- provision and verify all required v2 collections/indexes from `schema-contract.ts`;
+- verify runtime OPENID identity behavior;
+- verify actual CloudBase transaction commit/rollback semantics;
+- verify duplicate-key/error shapes against repository assumptions;
+- run concurrent invite-claim and request-application races;
+- validate Mini Program share/invite paths on actual devices;
+- run real two-account first-contact flows in both debt directions;
+- run real two-account known-counterparty and mutation-confirmation flows;
+- run Close/Correction device-level regression;
+- perform final obsolete setup/runtime residue audit;
+- review dependency/security findings without blindly applying breaking `npm audit fix --force` changes.
 
-Workspace CI/MemoryRepo tests do not substitute for these checks.
+Workspace CI and MemoryRepo tests do not substitute for R12D.
