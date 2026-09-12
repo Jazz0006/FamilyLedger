@@ -118,6 +118,7 @@ Page({
     mutationKey: '',
     mutationSuccess: '',
     canClose: false,
+    closeMinDate: ledgerToday(),
     closeBlockReason: '',
   },
 
@@ -152,6 +153,7 @@ Page({
         loading: false,
         today,
         canClose,
+        closeMinDate: latestDate && latestDate <= today ? latestDate : today,
         closeBlockReason,
         loan: {
           counterpartyName: view.counterparty.displayName,
@@ -180,7 +182,14 @@ Page({
   },
 
   closeMutations() {
-    this.setData({ mutationOpen: false, mutationSuccess: '', error: '' });
+    this.setData({
+      mutationOpen: false,
+      mutationSuccess: '',
+      error: '',
+      mutationSubmitted: false,
+      mutationSubmitting: false,
+      mutationKey: '',
+    });
   },
 
   resetMutation(patch) {
