@@ -103,19 +103,24 @@ describe('toInterestInput', () => {
     expect(input.principalSegments[0]?.deltaFen).toBe(-5_000 * YUAN);
   });
 
-  it('maps RATE_CHANGE snapshot to a rate period', () => {
+  it('maps RATE_CHANGE snapshot to a rate period with source sequence', () => {
     const input = toInterestInput(
       [
         evt({
           eventType: LoanEventType.RATE_CHANGE,
           rate: rate('0.06'),
           effectiveDate: '2026-07-01',
+          sequence: 1,
         }),
       ],
       '2026-12-01',
     );
     expect(input.ratePeriods).toEqual([
-      { annualEffectiveRate: '0.06', effectiveFrom: '2026-07-01' },
+      {
+        annualEffectiveRate: '0.06',
+        effectiveFrom: '2026-07-01',
+        sequence: 1,
+      },
     ]);
   });
 

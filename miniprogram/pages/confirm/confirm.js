@@ -1,9 +1,152 @@
 const { callLedger } = require('../../utils/api.js');
 const { formatFen } = require('../../utils/money.js');
+const { formatRatePercent } = require('../../utils/input.js');
 
-// 待确认卡/页 (spec §10): 明确金额和动作后确认/拒绝。
+function eventDescription(event) {
+  if (!event) return '';
+  switch (event.eventType) {
+    case 'PRINCIPAL_ADD':
+      return `${event.effectiveDate} · 新增本金 ${formatFen(event.amountFen || 0)}`;
+    case 'PRINCIPAL_REPAY':
+      return `${event.effectiveDate} · 归还本金 ${formatFen(event.amountFen || 0)}`;
+    case 'RATE_CHANGE':
+      return `${event.effectiveDate} · 年利率 ${formatRatePercent(event.rate && event.rate.annualEffectiveRate)}%`;
+    case 'CORRECTION':
+      if (event.amountFen != null) {
+        return `${event.effectiveDate} · 本金更正 ${event.amountFen >= 0 ? '+' : '-'}${formatFen(Math.abs(event.amountFen))}`;
+      }
+      return `${event.effectiveDate} · 利率更正为 ${formatRatePercent(event.rate && event.rate.annualEffectiveRate)}%`;
+    default:
+      return `${event.effectiveDate} · ${event.eventType}`;
+  }
+}
+
+function requestDescription(request, targetEvent) {
+  const payload = request.payload || {};
+  switch (request.type) {
+    case 'CREATE_LOAN':
+      return `本金 ${formatFen(payload.initialPrincipalFen || 0)} · 年利率 ${formatRatePercent(payload.rate && payload.rate.annualEffectiveRate)}% · ${payload.proposedEffectiveDate}`;
+    case 'PRINCIPAL_ADD':
+      return `新增本金 ${formatFen(payload.amountFen || 0)} · ${payload.proposedEffectiveDate}`;
+    case 'PRINCIPAL_REPAY':
+      return `归还本金 ${formatFen(payload.amountFen || 0)} · ${payload.proposedEffectiveDate}`;
+    case 'RATE_CHANGE':
+      return `调整年利率为 ${formatRatePercent(payload.rate && payload.rate.annualEffectiveRate)}% · ${payload.proposedEffectiveDate}`;
+    case 'CORRECTION': {
+      const target = targetEvent ? ` · 更正原记录：${eventDescription(targetEvent)}` : '';
+      if (payload.correctionKind === 'PRINCIPAL') {
+        const delta = payload.principalDeltaFen || 0;
+        return `本金更正 ${delta >= 0 ? '+' : '-'}${formatFen(Math.abs(delta))}${target}`;
+      }
+      return `利率更正为 ${formatRatePercent(payload.replacementRate && payload.replacementRate.annualEffectiveRate)}%${target}`;
+    }
+    case 'CLOSE_LOAN':
+      return `结清账本 · ${payload.proposedEffectiveDate} · 确认后停止后续计息`;
+    default:
+      return request.type;
+  }
+}
+
+function requestTitle(request) {
+  const names = {
+    CREATE_LOAN: '新建往来',
+    PRINCIPAL_ADD: '新增本金',
+    PRINCIPAL_REPAY: '归还本金',
+    RATE_CHANGE: '调整利率',
+    CORRECTION: '账本更正',
+    CLOSE_LOAN: '结清账本',
+  };
+  return names[request.type] || request.type;
+}
+
+function mapActionable(entry, targetEvent) {
+  const request = entry.request;
+  const verifying = request.status === 'PENDING_INITIATOR_VERIFY';
+  return {
+    id: request._id,
+    type: request.type,
+    title: verifying ? '确认对方身份' : requestTitle(request),
+    otherPartyName: entry.otherParty.displayName,
+    description: requestDescription(request, targetEvent),
+    note: (request.payload && (request.payload.note || request.payload.reason)) || '',
+    actionKind: verifying
+      ? 'VERIFY'
+      : request.type === 'CREATE_LOAN'
+        ? 'ACCEPT_CREATE'
+        : 'ACCEPT_CHANGE',
+    canReject: !verifying,
+    canCancel: verifying,
+  };
+}
+
+function mapProposed(entry, targetEvent) {
+  const request = entry.request;
+  return {
+    id: request._id,
+    type: request.type,
+    title: requestTitle(request),
+    otherPartyName: entry.otherParty
+      ? entry.otherParty.displayName
+      : '新联系人（尚未接受邀请）',
+    description: requestDescription(request, targetEvent),
+    note: (request.payload && (request.payload.note || request.payload.reason)) || '',
+  };
+}
+
+async function readAll(action) {
+  const items = [];
+  let cursor = null;
+  do {
+    const page = await callLedger(action, { limit: 100, cursor });
+    items.push(...(page.items || []));
+    cursor = page.nextCursor || null;
+  } while (cursor);
+  return items;
+}
+
+async function readAllEvents(loanId) {
+  const events = [];
+  let cursor = null;
+  do {
+    const page = await callLedger('listLoanEvents', { loanId, limit: 100, cursor });
+    events.push(...(page.items || []));
+    cursor = page.nextCursor || null;
+  } while (cursor);
+  return events;
+}
+
+async function mapWithCorrectionTargets(items, mapper, eventCache) {
+  const getEvents = async (loanId) => {
+    if (!eventCache.has(loanId)) {
+      eventCache.set(loanId, readAllEvents(loanId));
+    }
+    return eventCache.get(loanId);
+  };
+
+  return Promise.all(items.map(async (entry) => {
+    const request = entry.request;
+    if (
+      request.type === 'CORRECTION' &&
+      request.loanId &&
+      request.payload &&
+      request.payload.targetEventId
+    ) {
+      const events = await getEvents(request.loanId);
+      const target = events.find((event) => event._id === request.payload.targetEventId);
+      return mapper(entry, target || null);
+    }
+    return mapper(entry, null);
+  }));
+}
+
 Page({
-  data: { loading: true, error: '', requests: [] },
+  data: {
+    loading: true,
+    error: '',
+    requests: [],
+    sentRequests: [],
+    actingId: '',
+  },
 
   onShow() {
     this.load();
@@ -12,41 +155,62 @@ Page({
   async load() {
     this.setData({ loading: true, error: '' });
     try {
-      // TODO(impl): server action 'getPendingRequests' returns requests where
-      // requiredConfirmer == caller.
-      const res = await callLedger('getPendingRequests');
+      const [actionable, proposed] = await Promise.all([
+        readAll('listPendingRequests'),
+        readAll('listProposedRequests'),
+      ]);
+      const eventCache = new Map();
+      const [requests, sentRequests] = await Promise.all([
+        mapWithCorrectionTargets(actionable, mapActionable, eventCache),
+        mapWithCorrectionTargets(proposed, mapProposed, eventCache),
+      ]);
       this.setData({
         loading: false,
-        requests: (res.requests || []).map((r) => ({
-          ...r,
-          amount: r.amountFen == null ? '' : formatFen(r.amountFen),
-          // Buttons must state action + amount (spec §22).
-          confirmLabel: this.buildLabel(r),
-        })),
+        requests,
+        sentRequests,
+        actingId: '',
       });
     } catch (err) {
-      this.setData({ loading: false, error: err.message || '加载失败' });
+      this.setData({ loading: false, error: err.message || '加载失败', actingId: '' });
     }
   },
 
-  buildLabel(r) {
-    const amt = r.amountFen == null ? '' : formatFen(r.amountFen);
-    if (r.type === 'PRINCIPAL_ADD') return '确认新增本金 ' + amt;
-    if (r.type === 'PRINCIPAL_REPAY') return '确认归还本金 ' + amt;
-    if (r.type === 'RATE_CHANGE') return '确认利率调整';
-    return '确认';
+  async accept(e) {
+    const { id, kind } = e.currentTarget.dataset;
+    this.setData({ actingId: id, error: '' });
+    try {
+      if (kind === 'VERIFY') {
+        await callLedger('verifyFirstCounterparty', { requestId: id });
+      } else if (kind === 'ACCEPT_CREATE') {
+        await callLedger('acceptKnownLoanRequest', { requestId: id });
+      } else {
+        await callLedger('acceptRequest', { requestId: id });
+      }
+      await this.load();
+    } catch (err) {
+      this.setData({ actingId: '', error: err.message || '确认失败' });
+    }
   },
 
-  async decide(e) {
-    const { id, approve } = e.currentTarget.dataset;
+  async reject(e) {
+    const id = e.currentTarget.dataset.id;
+    this.setData({ actingId: id, error: '' });
     try {
-      await callLedger('confirmChange', {
-        changeRequestId: id,
-        approve: approve === 'true',
-      });
-      this.load();
+      await callLedger('rejectRequest', { requestId: id });
+      await this.load();
     } catch (err) {
-      this.setData({ error: err.message || '操作失败' });
+      this.setData({ actingId: '', error: err.message || '拒绝失败' });
+    }
+  },
+
+  async cancel(e) {
+    const id = e.currentTarget.dataset.id;
+    this.setData({ actingId: id, error: '' });
+    try {
+      await callLedger('cancelRequest', { requestId: id });
+      await this.load();
+    } catch (err) {
+      this.setData({ actingId: '', error: err.message || '取消失败' });
     }
   },
 });

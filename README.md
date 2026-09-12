@@ -13,25 +13,17 @@ It is not a bank, payment service, lending marketplace, deposit product, or inve
 
 The v1.1 family-loan implementation is historical reference only. There is no backward-compatibility requirement for its API, collections, UI, or development data.
 
-## v2 domain model
+## v2 model
 
-- Every WeChat identity maps to a normal `User`.
+- Every WeChat identity maps to an ordinary `User`.
 - There is no global borrower/lender role, fixed family, or family administrator.
 - Borrower/lender roles exist only inside one `Loan`.
 - One Loan is one shared ledger viewed from opposite directions by its two parties.
 - Every formal ledger change follows **propose → counterparty consent → apply**.
 - First-contact invites additionally require the initiator to verify the claimed counterparty before the first Loan becomes formal.
-- Existing counterparties can receive direct in-app pending requests; WeChat sharing is an optional reminder channel.
+- Existing counterparties can receive direct in-app pending requests.
 
 ## Architecture
-
-- `packages/shared` — v2 domain types, enums, constants, collection names.
-- `packages/calc` — deterministic interest/balance engine.
-- `cloud/functions/ledger` — CloudBase server-authoritative boundary.
-- `miniprogram` — WeChat native client.
-- `docs` — authoritative product/data/rewrite documents.
-
-Dependency direction:
 
 ```text
 Mini Program UI
@@ -45,6 +37,12 @@ Repository Interfaces
 CloudBase Repository / Infrastructure
 ```
 
+- `packages/shared` — v2 domain types, enums and cross-layer contracts.
+- `packages/calc` — deterministic interest/balance engine.
+- `cloud/functions/ledger` — server-authoritative CloudBase application boundary.
+- `miniprogram` — active v2 WeChat native client.
+- `docs` — product/data/rewrite decisions and milestone records.
+
 ## Non-negotiable invariants
 
 1. Money is integer Fen and must remain within safe-integer range.
@@ -53,38 +51,46 @@ CloudBase Repository / Infrastructure
 4. Both parties read the same Loan/event stream; never maintain duplicated balances.
 5. Formal ledger mutation requires both parties' consent.
 6. Interest is calculated, not written daily.
-7. An agreed annual rate is an explicit snapshot; no global fallback rate silently fills missing history.
+7. Every Loan has explicit confirmed rate history; there is no silent global fallback rate.
 8. `packages/calc` is the single money-math implementation.
 9. OPENID comes from trusted server runtime identity.
 10. Mutations are idempotent and transaction/CAS safe.
-11. Growing collection reads paginate; balance reconstruction may not use truncated history.
+11. Growing collection reads paginate; reconstruction may not use truncated history.
 
-## Clean rewrite status
+## Current rewrite status
 
-v2 is being implemented as a clean rewrite inside the existing repository, not as a compatibility migration from v1.1.
+R1-R11 built the v2 domain, persistence, first-contact CREATE_LOAN, read model, repayment, principal add, rate change, Correction and Close semantics/implementation.
 
-R1 intentionally removes the old family/admin server action layer rather than adapting it. During R1 the cloud router is explicitly disabled until the v2 state machine/repository/actions are rebuilt. The legacy mini-program UI remains temporarily as a visual/reference artifact and will be replaced when the v2 user flows reach the UI milestones; it must not drive server/domain design.
+**R12 is now in progress.** The cutover audit is complete and the old family/admin Mini Program pages have been removed. R12A added UI-facing safe profiles plus known-counterparty discovery and direct CREATE_LOAN. R12B now provides the active v2 Mini Program shell for:
 
-Development sequence:
+- ordinary-user bootstrap;
+- bidirectional home summary and Loan lists;
+- first-contact and existing-counterparty new Loan proposals;
+- first-contact invite preview/acceptance and initiator verification/cancellation;
+- pending request accept/reject flows;
+- Loan summary and complete formal event history.
 
-1. R1 — clean shared domain + remove obsolete v1 server business layer
-2. R2 — request state machine, permissions, idempotency fingerprint
-3. R3 — v2 Repo / MemoryRepo / CloudBase persistence and safety primitives
-4. R4 — `ensureUser`
-5. R5 — `CREATE_LOAN` closed loop
-6. R6 — bidirectional home/query flows
-7. R7 — repayment
-8. R8 — principal add / rate change / correction / close
-9. R9 — remove remaining v1 UI/docs/deployment residue
-10. R10 — CPI source, export/backup, UI polish, real two-account regression
+The server already supports repayment, principal-add, rate-change, Correction and Close proposals. Dedicated mutation forms from the Loan-detail page remain a subsequent UI slice; real two-account CloudBase/WeChat validation is also still required before production cutover.
 
-## Getting started
+## Validation
+
+GitHub Actions runs the workspace gate on every push/PR:
 
 ```bash
-nvm use
-npm install
+npm ci
 npm run build
+npm run typecheck
 npm test
 ```
 
-Unit/domain tests should remain runnable without CloudBase. Real OPENID, transactions, invite claiming, database indexes, sharing, and two-user flows must be tested against a CloudBase development environment before release.
+These checks cover deterministic/domain/application behavior. They do **not** replace real CloudBase validation for runtime OPENID, database indexes, transactions, concurrent invite claims, WeChat sharing and two-account end-to-end flows.
+
+For local work:
+
+```bash
+nvm use
+npm ci
+npm run build
+npm run typecheck
+npm test
+```

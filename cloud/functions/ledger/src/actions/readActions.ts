@@ -4,6 +4,7 @@ import {
   type Loan,
   type LoanEvent,
   type LoanSummary,
+  type UserDisplayProfile,
   type UserHomeSummary,
 } from '@family-ledger/shared';
 import { AppError, ErrorCode } from '../errors.js';
@@ -17,6 +18,7 @@ import {
   readAllActionableRequests,
   readAllLoansForDirection,
 } from './read-model.js';
+import { requireUserDisplayProfile } from './user-display.js';
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
@@ -25,12 +27,23 @@ export interface LoanView {
   loan: Loan;
   direction: LoanDirection;
   counterpartyUserId: string;
+  counterparty: UserDisplayProfile;
   summary: LoanSummary;
 }
 
 export interface LoanListPage {
   items: LoanView[];
   nextCursor: string | null;
+}
+
+export interface ActionableRequestView {
+  request: LedgerRequest;
+  otherParty: UserDisplayProfile;
+}
+
+export interface ProposedRequestView {
+  request: LedgerRequest;
+  otherParty: UserDisplayProfile | null;
 }
 
 function requireObjectOrEmpty(input: unknown, label: string): Record<string, unknown> {
@@ -86,25 +99,26 @@ async function participantLoan(
   userId: string,
 ): Promise<Loan> {
   const loan = await ctx.repo.getLoan(loanId);
-  // Deliberately collapse missing and unauthorized into the same response so an
-  // unrelated caller cannot use Loan IDs to enumerate private relationships.
   if (!loan || !isLoanParticipant(loan, userId)) {
     throw new AppError(ErrorCode.NOT_FOUND, 'Loan not found');
   }
   return loan;
 }
 
-function toLoanView(
+async function toLoanView(
+  ctx: ActionContext,
   loan: Loan,
   userId: string,
   summary: LoanSummary,
-): LoanView {
+): Promise<LoanView> {
   const direction = loanDirection(loan, userId);
+  const counterpartyUserId =
+    direction === 'LENDER' ? loan.borrowerUserId : loan.lenderUserId;
   return {
     loan,
     direction,
-    counterpartyUserId:
-      direction === 'LENDER' ? loan.borrowerUserId : loan.lenderUserId,
+    counterpartyUserId,
+    counterparty: await requireUserDisplayProfile(ctx.repo, counterpartyUserId),
     summary,
   };
 }
@@ -122,7 +136,7 @@ export async function getLoan(
     loan,
     ledgerToday(ctx.now),
   );
-  return toLoanView(loan, actor._id, summary);
+  return toLoanView(ctx, loan, actor._id, summary);
 }
 
 export async function listLoans(
@@ -155,6 +169,7 @@ export async function listLoans(
   const items = await Promise.all(
     loans.items.map(async (loan) =>
       toLoanView(
+        ctx,
         loan,
         actor._id,
         await deriveLoanSummaryFromRepo(ctx.repo, loan, asOfDate),
@@ -178,13 +193,53 @@ export async function listLoanEvents(
 export async function listPendingRequests(
   ctx: ActionContext,
   input: unknown,
-): Promise<Page<LedgerRequest>> {
+): Promise<Page<ActionableRequestView>> {
   const raw = requireObjectOrEmpty(input, 'listPendingRequests');
   const actor = await requireCurrentUser(ctx);
-  return ctx.repo.listActionableRequestsForUser({
+  const page = await ctx.repo.listActionableRequestsForUser({
     userId: actor._id,
     page: pageInput(raw),
   });
+  const items = await Promise.all(
+    page.items.map(async (request) => {
+      const otherPartyId =
+        request.proposerUserId === actor._id
+          ? request.counterpartyUserId
+          : request.proposerUserId;
+      if (!otherPartyId) {
+        throw new AppError(
+          ErrorCode.INVALID_STATE,
+          'Actionable request has no displayable counterparty',
+        );
+      }
+      return {
+        request,
+        otherParty: await requireUserDisplayProfile(ctx.repo, otherPartyId),
+      };
+    }),
+  );
+  return { items, nextCursor: page.nextCursor };
+}
+
+export async function listProposedRequests(
+  ctx: ActionContext,
+  input: unknown,
+): Promise<Page<ProposedRequestView>> {
+  const raw = requireObjectOrEmpty(input, 'listProposedRequests');
+  const actor = await requireCurrentUser(ctx);
+  const page = await ctx.repo.listProposedPendingRequestsForUser({
+    userId: actor._id,
+    page: pageInput(raw),
+  });
+  const items = await Promise.all(
+    page.items.map(async (request) => ({
+      request,
+      otherParty: request.counterpartyUserId
+        ? await requireUserDisplayProfile(ctx.repo, request.counterpartyUserId)
+        : null,
+    })),
+  );
+  return { items, nextCursor: page.nextCursor };
 }
 
 function emptySide() {

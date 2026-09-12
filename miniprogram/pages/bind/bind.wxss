@@ -1,0 +1,21 @@
+.relation {
+  font-size: 34rpx;
+  font-weight: 600;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 24rpx;
+  padding: 14rpx 0;
+  border-top: 1rpx solid #eeeeee;
+}
+
+.warning {
+  display: block;
+  color: #8a5a00;
+  background: #fff7df;
+  border-radius: 12rpx;
+  padding: 18rpx 20rpx;
+  margin: 24rpx 0;
+}

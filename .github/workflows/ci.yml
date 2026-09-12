@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'codex/**'
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Report runtime dependency audit
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=moderate
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run bundle -w @family-ledger/cloud-ledger
+      - run: npm run deployment:check -w @family-ledger/cloud-ledger
+      - run: npm run schema:plan -w @family-ledger/cloud-ledger -- --json
+      - run: node --check cloud/functions/ledger/scripts/cloudbase-smoke.mjs

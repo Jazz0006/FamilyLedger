@@ -1,22 +1,61 @@
 # Cloud functions (Tencent CloudBase)
 
-This directory is the server-authoritative boundary for the v2 bilateral ledger.
+This directory is the server-authoritative boundary for the v2 bilateral ledger. The v1.1 family/admin action layer and persistence model were removed during the clean rewrite and are not compatibility targets.
 
-## Current rewrite status
+## Active v2 router
 
-The v1.1 family/admin action layer and repository implementation were intentionally removed in **R1 — Clean v2 Domain Rewrite**. They are not compatibility targets.
+The `ledger` cloud function is active. Current routed actions include:
 
-Current checkpoints:
+### Identity / discovery
 
-1. R1 — clean v2 domain foundation;
-2. R2 — request state machine, permissions, request fingerprinting;
-3. **R3 — v2 persistence contract, MemoryRepo, CloudBaseRepo, cursor pagination, transaction primitives and index contract.**
+- `ensureUser`
+- `listKnownCounterparties`
 
-The `ledger` entry point is still deliberately disabled for product actions. R4 will restore the first real v2 action (`ensureUser`); R5 will add the first formal ledger write flow (`CREATE_LOAN`). Do not deploy the current rewrite branch as a finished ledger backend.
+### CREATE_LOAN
 
-## Target collections
+First contact:
 
-The v2 target collections are:
+```text
+createLoanRequest
+→ createLoanInvite
+→ previewInvite
+→ acceptInviteRequest
+→ verifyFirstCounterparty
+→ atomic Loan + two genesis events
+```
+
+Known counterparty:
+
+```text
+createKnownLoanRequest
+→ acceptKnownLoanRequest
+→ atomic Loan + two genesis events
+```
+
+### Reads
+
+- `getHomeSummary`
+- `getLoan`
+- `listLoans`
+- `listLoanEvents`
+- `listPendingRequests`
+
+### Existing-Loan mutations
+
+- `createRepaymentRequest`
+- `createPrincipalAddRequest`
+- `createRateChangeRequest`
+- `createCorrectionRequest`
+- `createCloseLoanRequest`
+- `acceptRequest`
+- `rejectRequest`
+- `cancelRequest`
+
+Routers stay thin; state, permission, validation, calculation and persistence rules live in focused modules below `src/actions`, `src/domain`, `src/data` and `packages/calc`.
+
+## Collections
+
+Active v2 collections:
 
 - `users`
 - `loans`
@@ -24,53 +63,50 @@ The v2 target collections are:
 - `loan_events`
 - `invite_tokens`
 - `audit_logs`
-- optional future `rate_references`
+- optional/future `rate_references`
 
-Do **not** recreate the legacy `loan_accounts`, `loan_terms`, or `change_requests` schema for v2.
+Do **not** recreate legacy `loan_accounts`, `loan_terms`, or `change_requests`.
 
 ## Persistence contract
 
-The application layer depends on `src/data/repo.ts`, not directly on CloudBase query objects.
+The application layer depends on `src/data/repo.ts`, not raw CloudBase query objects.
 
-Implementations:
+Implementations/support:
 
-- `src/data/memory-repo.ts` — deterministic transactional test implementation;
-- `src/data/cloudbase-repo.ts` — CloudBase implementation;
+- `src/data/memory-repo.ts` — deterministic transactional tests;
+- `src/data/cloudbase-repo.ts` — CloudBase adapter;
 - `src/data/cursor.ts` — opaque stable pagination cursors;
 - `src/data/event-idempotency.ts` — deterministic formal-event keys and collision checks;
-- `src/data/schema-contract.ts` — required database index contract.
+- `src/data/schema-contract.ts` — executable required-index contract.
 
-There is intentionally no generic ORM/repository framework.
+The current CloudBase SDK type declarations do not completely model the transaction callback surface used by the runtime. That declaration gap is isolated as a narrow structural cast inside the CloudBase adapter; it must not leak `any`/SDK assumptions into application/domain code.
 
 ## Pagination
 
-Growing collections never expose an unbounded one-shot `get()` assumption.
+Growing collections never rely on an unbounded one-shot `get()`.
 
 - Loan/request lists: `createdAt DESC, _id DESC` cursor.
 - Loan events: `sequence ASC` cursor.
 - page size is bounded to 1–100.
+- complete balance/history reconstruction follows continuation cursors until exhausted.
 
-The locked `@cloudbase/node-sdk` / `@cloudbase/database` path may cap one database read at 100 rows. Therefore CloudBaseRepo requests at most the requested page size, never `limit + 1`. A completely full page returns a continuation cursor; if it happened to be the exact final multiple of the page size, the next request returns an empty page. This is an acceptable extra bounded read and is preferable to silent truncation.
+A completely full CloudBase page may yield a continuation cursor even when it was the exact final multiple of page size; the next bounded read may then return empty. This is intentional and preferable to silent truncation.
 
 ## Event ordering
 
-`LoanEvent.sequence` is the authoritative order inside one Loan.
+`LoanEvent.sequence` is authoritative within one Loan.
 
-CloudBase persists an infrastructure-only field on the Loan document:
+CloudBase persists an infrastructure-only Loan field:
 
 ```text
 nextEventSequence
 ```
 
-This field is **not** part of the shared `Loan` domain type and is not an accounting balance. It exists only to reserve contiguous sequence values inside the same database transaction that appends formal events.
-
-Never derive the next event sequence by querying the latest event outside a transaction.
+It is not domain balance state. It reserves contiguous event sequences inside the same transaction that appends formal events. Never derive the next sequence from an out-of-transaction “latest event” query.
 
 ## Required indexes
 
-The executable source-of-truth list is `src/data/schema-contract.ts`.
-
-Required baseline:
+The executable source of truth is `src/data/schema-contract.ts`.
 
 | Collection | Index | Unique |
 |---|---|---:|
@@ -87,65 +123,57 @@ Required baseline:
 | `loan_events` | `sourceRequestId` | **no** |
 | `invite_tokens` | `tokenHash` | yes |
 
-`loan_events.sourceRequestId` must stay non-unique because one `CREATE_LOAN` request creates two genesis events: initial principal and initial rate.
+`loan_events.sourceRequestId` is intentionally non-unique because one CREATE_LOAN request creates two genesis events: initial principal and initial rate.
 
-## Transaction boundary
+## Transaction boundaries
 
-`LedgerRepo.runTransaction()` exposes only transaction-scoped v2 persistence capabilities.
+Formal operations that must be all-or-nothing use `LedgerRepo.runTransaction()`.
 
-Future R5 CREATE_LOAN application must be able to complete in one transaction:
+Examples:
 
-- reload/check the request;
-- create the Loan;
-- reserve two event sequences;
-- append initial principal + initial rate events;
-- mark request `APPLIED`;
-- finalize the invite when applicable.
+- first-contact claim binds invite + request identity atomically but does not create a Loan;
+- first-contact final verification creates Loan + both genesis events + APPLIED atomically;
+- known-counterparty CREATE_LOAN acceptance creates the same genesis set atomically;
+- existing-Loan accepted mutations append the formal event and transition the request atomically;
+- Close additionally updates the typed Loan lifecycle projection atomically.
 
-A failure before commit must leave none of those formal writes behind.
+Balance-sensitive acceptance reads the complete relevant formal history from the same transaction snapshot before appending.
 
 ## Idempotency
 
 - `ledger_requests.idempotencyKey` is unique.
-- The R2 `requestFingerprint` distinguishes legitimate retry from key reuse with changed business semantics.
+- `requestFingerprint` distinguishes a legitimate retry from same-key/different-semantics conflict.
 - `loan_events.idempotencyKey` is unique.
-- Server event keys are deterministic (`<requestId>:<purpose>`).
-- Reusing one event key for different event content is a conflict.
-- `sourceRequestId` is a lookup field, not an idempotency key.
-
-## CloudBase SDK baseline
-
-The repository dependency range is `@cloudbase/node-sdk ^3.9.0`; the current lockfile resolves **3.18.3** with `@cloudbase/database 1.4.3`.
-
-R3 intentionally does not combine the product rewrite with an SDK migration. The database implementation is isolated behind `LedgerRepo` so a future move to the newer CloudBase SDK can be handled separately.
+- server event keys are deterministic (`<requestId>:<purpose>`).
+- event sequence and event idempotency collisions fail closed.
+- first-contact invite raw tokens are bearer credentials; only their SHA-256 hashes are persisted.
 
 ## Security boundary
 
 - Runtime OPENID is authoritative identity.
 - Client-supplied user IDs never prove identity.
+- `UserDisplayProfile` omits OPENID from UI-facing relationship data.
+- Known counterparties are derived from existing shared Loans; arbitrary user IDs cannot bypass relationship checks.
 - Clients do not directly mutate formal ledger collections.
-- Applying a request and creating its formal events must be atomic.
 - Formal `loan_events` are append-only through product APIs.
+- Applying a request and creating its formal accounting effect is transactionally atomic.
 
-## Reusable infrastructure
+## SDK baseline
 
-The rewrite keeps infrastructure independent of the old product model:
+The dependency range is `@cloudbase/node-sdk ^3.9.0`; the current lockfile resolves 3.18.3 with `@cloudbase/database 1.4.3`.
 
-- `src/context.ts` — CloudBase runtime context;
-- `src/crypto.ts` — token hashing/random helpers;
-- `src/errors.ts` — v2 application error envelope;
-- `scripts/bundle.mjs` — deployment bundle plumbing.
+The v2 rewrite intentionally did not combine product semantics with an SDK migration. A future SDK upgrade should remain isolated behind `LedgerRepo`/`CloudBaseRepo`.
 
-## Build
+## Validation
 
 From the repository root:
 
 ```bash
-npm install
+npm ci
 npm run build
 npm run typecheck
 npm test
 npm run bundle -w @family-ledger/cloud-ledger
 ```
 
-CloudBase integration testing is still required before release for real transactions, indexes, duplicate-key error shapes and concurrent invite/request application. Pure MemoryRepo tests do not substitute for that environment.
+GitHub Actions runs the first four commands. Real CloudBase testing is still required before production release for runtime OPENID, actual index definitions, transaction/rollback semantics, duplicate-key error shapes, concurrent invite/request application and full two-account flows.

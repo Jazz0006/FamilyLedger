@@ -1,4 +1,6 @@
-// 家庭借款账本 — app shell.
+// 来往账 — WeChat Mini Program app shell.
+const { cloudbaseEnvId } = require('./config.js');
+
 App({
   onLaunch() {
     if (!wx.cloud) {
@@ -6,9 +8,9 @@ App({
       return;
     }
     wx.cloud.init({
-      // TODO: replace with your CloudBase env id, or use DYNAMIC_CURRENT_ENV
-      // when the miniprogram and cloud env are bound 1:1.
-      env: wx.cloud.DYNAMIC_CURRENT_ENV,
+      // Mini Program client SDK expects an explicit environment ID. The AppID
+      // must be associated with this environment in CloudBase Security Settings.
+      env: cloudbaseEnvId,
       traceUser: true,
     });
   },

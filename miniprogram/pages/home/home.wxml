@@ -1,43 +1,56 @@
-<!-- 我的借款首页 (spec §8): 当前应还金额为第一视觉焦点 -->
-<view wx:if="{{loading}}" class="card">
-  <text class="label">加载中…</text>
+<view class="page">
+  <view wx:if="{{loading}}" class="card"><text class="muted">加载中…</text></view>
+  <view wx:elif="{{error}}" class="error">{{error}}</view>
+
+  <block wx:else>
+    <view wx:if="{{pendingCount > 0}}" class="card pending" bindtap="goConfirm">
+      <view class="row">
+        <text>待我确认</text>
+        <text class="pending-count">{{pendingCount}}</text>
+      </view>
+      <text class="muted">点击查看需要你确认的往来变更</text>
+    </view>
+
+    <view class="summary-grid">
+      <view class="card summary-card">
+        <text class="label">别人欠我的</text>
+        <view class="amount-hero">{{summary.receivable}}</view>
+        <text class="muted">本金 {{summary.receivablePrincipal}}</text>
+      </view>
+      <view class="card summary-card">
+        <text class="label">我欠别人的</text>
+        <view class="amount-hero">{{summary.payable}}</view>
+        <text class="muted">本金 {{summary.payablePrincipal}}</text>
+      </view>
+    </view>
+
+    <view class="home-actions">
+      <button class="btn-primary" bindtap="goCreate">新建一笔往来</button>
+      <button class="btn-secondary" bindtap="goConfirm">待确认与已发起</button>
+    </view>
+
+    <view class="card">
+      <view class="section-title">别人欠我的</view>
+      <view wx:if="{{receivableLoans.length === 0}}" class="empty">暂无记录</view>
+      <view wx:for="{{receivableLoans}}" wx:key="loanId" class="loan-row" data-loanid="{{item.loanId}}" bindtap="openLoan">
+        <view>
+          <view class="counterparty">{{item.counterpartyName}}</view>
+          <text class="muted">本金 {{item.principal}} · 年利率 {{item.rate}}%</text>
+        </view>
+        <view class="loan-amount">{{item.total}}</view>
+      </view>
+    </view>
+
+    <view class="card">
+      <view class="section-title">我欠别人的</view>
+      <view wx:if="{{payableLoans.length === 0}}" class="empty">暂无记录</view>
+      <view wx:for="{{payableLoans}}" wx:key="loanId" class="loan-row" data-loanid="{{item.loanId}}" bindtap="openLoan">
+        <view>
+          <view class="counterparty">{{item.counterpartyName}}</view>
+          <text class="muted">本金 {{item.principal}} · 年利率 {{item.rate}}%</text>
+        </view>
+        <view class="loan-amount">{{item.total}}</view>
+      </view>
+    </view>
+  </block>
 </view>
-
-<view wx:elif="{{error}}" class="card">
-  <text>{{error}}</text>
-</view>
-
-<block wx:else>
-  <!-- 待确认卡片 (spec §8): 有待确认操作时置顶 -->
-  <view wx:if="{{pendingCount > 0}}" class="card" bindtap="goConfirm">
-    <text>你有 {{pendingCount}} 项待确认操作，点击处理</text>
-  </view>
-
-  <!-- 我的借款 -->
-  <view class="card" wx:if="{{mine}}">
-    <text class="label">曾骏 当前应还你</text>
-    <view class="amount-hero">{{mine.totalDue}}</view>
-    <view class="row">
-      <view><text class="label">借款本金</text><text>{{mine.principal}}</text></view>
-      <view><text class="label">累计利息</text><text>{{mine.interest}}</text></view>
-    </view>
-    <view class="row">
-      <view><text class="label">今日利息增加</text><text>{{mine.todayInterest}}</text></view>
-      <view><text class="label">年利率</text><text>{{mine.rate}}%</text></view>
-    </view>
-    <button class="btn-secondary" bindtap="goDetail">查看我的明细</button>
-  </view>
-
-  <!-- 全家借款概览 (spec §6) -->
-  <view class="card">
-    <text class="label">全家借款</text>
-    <view wx:for="{{family}}" wx:key="displayName" class="row">
-      <text>{{item.displayName}}</text>
-      <text>{{item.totalDue}}</text>
-    </view>
-    <view class="row total">
-      <text>全家合计</text>
-      <text>{{familyTotalDue}}</text>
-    </view>
-  </view>
-</block>

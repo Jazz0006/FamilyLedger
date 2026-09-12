@@ -1,10 +1,143 @@
-<view wx:if="{{loading}}" class="card"><text class="label">加载中…</text></view>
-<view wx:elif="{{error}}" class="card"><text>{{error}}</text></view>
-<view wx:else class="card">
-  <text class="label">我的明细</text>
-  <view wx:for="{{events}}" wx:key="_id" class="event">
-    <text>{{item.effectiveDate}} · {{item.eventType}}</text>
-    <text>{{item.amount}}</text>
-  </view>
-  <text wx:if="{{events.length === 0}}" class="label">暂无记录</text>
+<view class="page">
+  <view wx:if="{{loading}}" class="card"><text class="muted">加载中…</text></view>
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+  <view wx:if="{{mutationSuccess}}" class="success">{{mutationSuccess}}</view>
+
+  <block wx:if="{{!loading && loan}}">
+    <view class="card">
+      <view class="row">
+        <view>
+          <view class="section-title">{{loan.counterpartyName}}</view>
+          <text class="muted">{{loan.directionLabel}} · {{loan.statusLabel}}</text>
+        </view>
+        <text class="muted">截至 {{loan.asOfDate}}</text>
+      </view>
+      <view class="amount-hero">{{loan.total}}</view>
+      <view class="metrics">
+        <view><text class="label">本金</text><view>{{loan.principal}}</view></view>
+        <view><text class="label">利息</text><view>{{loan.interest}}</view></view>
+        <view><text class="label">今日利息</text><view>{{loan.todayInterest}}</view></view>
+        <view><text class="label">当前年利率</text><view>{{loan.rate}}%</view></view>
+      </view>
+      <button wx:if="{{loan.status === 'ACTIVE' && !mutationOpen}}" class="btn-primary mutation-entry" bindtap="openMutations">发起账本变更</button>
+    </view>
+
+    <view wx:if="{{mutationOpen}}" class="card mutation-card">
+      <view class="row panel-heading">
+        <view>
+          <view class="section-title">发起账本变更</view>
+          <text class="muted">只有对方确认后，变更才会写入正式账本。</text>
+        </view>
+        <button class="close-button" bindtap="closeMutations">关闭</button>
+      </view>
+
+      <view class="mutation-grid">
+        <button class="choice {{mutationType === 'REPAY' ? 'active' : ''}}" data-type="REPAY" bindtap="chooseMutation" disabled="{{mutationSubmitted}}">归还本金</button>
+        <button class="choice {{mutationType === 'ADD' ? 'active' : ''}}" data-type="ADD" bindtap="chooseMutation" disabled="{{mutationSubmitted}}">新增本金</button>
+        <button class="choice {{mutationType === 'RATE' ? 'active' : ''}}" data-type="RATE" bindtap="chooseMutation" disabled="{{mutationSubmitted}}">调整利率</button>
+        <button class="choice {{mutationType === 'CORRECT_PRINCIPAL' ? 'active' : ''}}" data-type="CORRECT_PRINCIPAL" bindtap="chooseMutation" disabled="{{mutationSubmitted}}">本金更正</button>
+        <button class="choice {{mutationType === 'CORRECT_RATE' ? 'active' : ''}}" data-type="CORRECT_RATE" bindtap="chooseMutation" disabled="{{mutationSubmitted}}">利率更正</button>
+        <button class="choice {{mutationType === 'CLOSE' ? 'active' : ''}}" data-type="CLOSE" bindtap="chooseMutation" disabled="{{mutationSubmitted}}">结清账本</button>
+      </view>
+
+      <block wx:if="{{mutationType === 'REPAY' || mutationType === 'ADD'}}">
+        <view class="field">
+          <text class="field-label">{{mutationType === 'REPAY' ? '归还本金（元）' : '新增本金（元）'}}</text>
+          <input class="input" type="digit" placeholder="例如 1000" value="{{mutationAmountYuan}}" bindinput="onMutationAmount" disabled="{{mutationSubmitted}}" />
+        </view>
+        <view class="field">
+          <text class="field-label">生效日期</text>
+          <picker mode="date" value="{{mutationDate}}" bindchange="onMutationDate" disabled="{{mutationSubmitted}}">
+            <view class="picker">{{mutationDate}}</view>
+          </picker>
+        </view>
+      </block>
+
+      <block wx:if="{{mutationType === 'RATE'}}">
+        <view class="field">
+          <text class="field-label">新年利率（%）</text>
+          <input class="input" type="digit" placeholder="例如 5" value="{{mutationRatePercent}}" bindinput="onMutationRate" disabled="{{mutationSubmitted}}" />
+        </view>
+        <view class="field">
+          <text class="field-label">生效日期</text>
+          <picker mode="date" value="{{mutationDate}}" bindchange="onMutationDate" disabled="{{mutationSubmitted}}">
+            <view class="picker">{{mutationDate}}</view>
+          </picker>
+        </view>
+      </block>
+
+      <block wx:if="{{mutationType === 'CORRECT_PRINCIPAL'}}">
+        <view class="field">
+          <text class="field-label">要更正的正式本金记录</text>
+          <picker wx:if="{{principalTargets.length > 0}}" mode="selector" range="{{principalTargets}}" range-key="label" value="{{principalTargetIndex}}" bindchange="onPrincipalTarget" disabled="{{mutationSubmitted}}">
+            <view class="picker">{{principalTargets[principalTargetIndex].label}}</view>
+          </picker>
+          <view wx:else class="empty">没有可更正的本金记录</view>
+        </view>
+        <view class="field">
+          <text class="field-label">更正方向</text>
+          <view class="choice-row">
+            <button class="choice {{correctionDirection === 'ADD' ? 'active' : ''}}" data-direction="ADD" bindtap="chooseCorrectionDirection" disabled="{{mutationSubmitted}}">应增加本金</button>
+            <button class="choice {{correctionDirection === 'SUBTRACT' ? 'active' : ''}}" data-direction="SUBTRACT" bindtap="chooseCorrectionDirection" disabled="{{mutationSubmitted}}">应减少本金</button>
+          </view>
+        </view>
+        <view class="field">
+          <text class="field-label">更正金额（元）</text>
+          <input class="input" type="digit" placeholder="输入差额，不是改后的总额" value="{{mutationAmountYuan}}" bindinput="onMutationAmount" disabled="{{mutationSubmitted}}" />
+        </view>
+        <view class="hint">更正不会修改或删除原记录，而是追加一条补偿事件；生效日期自动继承被更正记录。</view>
+      </block>
+
+      <block wx:if="{{mutationType === 'CORRECT_RATE'}}">
+        <view class="field">
+          <text class="field-label">要更正的正式利率记录</text>
+          <picker wx:if="{{rateTargets.length > 0}}" mode="selector" range="{{rateTargets}}" range-key="label" value="{{rateTargetIndex}}" bindchange="onRateTarget" disabled="{{mutationSubmitted}}">
+            <view class="picker">{{rateTargets[rateTargetIndex].label}}</view>
+          </picker>
+          <view wx:else class="empty">没有可更正的利率记录</view>
+        </view>
+        <view class="field">
+          <text class="field-label">正确年利率（%）</text>
+          <input class="input" type="digit" placeholder="例如 4.5" value="{{mutationRatePercent}}" bindinput="onMutationRate" disabled="{{mutationSubmitted}}" />
+        </view>
+        <view class="hint">同一天如果已有多次利率调整，只允许更正当前正式生效的那一条；日期自动继承目标记录。</view>
+      </block>
+
+      <block wx:if="{{mutationType === 'CLOSE'}}">
+        <view wx:if="{{!canClose}}" class="warning">{{closeBlockReason}}</view>
+        <view class="field">
+          <text class="field-label">结清日期</text>
+          <picker mode="date" start="{{closeMinDate}}" end="{{today}}" value="{{mutationDate}}" bindchange="onMutationDate" disabled="{{mutationSubmitted || !canClose}}">
+            <view class="picker">{{mutationDate}}</view>
+          </picker>
+        </view>
+        <view class="hint">结清不会自动制造一笔还款。本金必须已经为 0；对方确认后，系统会把截至结清日的剩余利息记录为离线已处理的结算快照，并停止后续计息。</view>
+      </block>
+
+      <view class="field">
+        <text class="field-label">{{mutationType === 'CORRECT_PRINCIPAL' || mutationType === 'CORRECT_RATE' ? '更正原因（可选）' : '备注（可选）'}}</text>
+        <textarea class="input note" maxlength="500" placeholder="补充说明" value="{{mutationNote}}" bindinput="onMutationNote" disabled="{{mutationSubmitted}}"></textarea>
+      </view>
+
+      <button
+        class="btn-primary"
+        loading="{{mutationSubmitting}}"
+        disabled="{{mutationSubmitting || mutationSubmitted || (mutationType === 'CLOSE' && !canClose) || (mutationType === 'CORRECT_PRINCIPAL' && principalTargets.length === 0) || (mutationType === 'CORRECT_RATE' && rateTargets.length === 0)}}"
+        bindtap="submitMutation"
+      >{{mutationSubmitted ? '已发起，等待对方确认' : '发起确认'}}</button>
+      <button wx:if="{{mutationSubmitted}}" class="btn-secondary" bindtap="closeMutations">完成</button>
+    </view>
+
+    <view class="card">
+      <view class="section-title">正式账本事件</view>
+      <view wx:if="{{events.length === 0}}" class="empty">暂无事件</view>
+      <view wx:for="{{events}}" wx:key="id" class="event-row">
+        <view>
+          <view>{{item.title}}</view>
+          <text class="muted">{{item.effectiveDate}} · #{{item.sequence}}</text>
+        </view>
+        <view class="amount">{{item.value}}</view>
+      </view>
+    </view>
+  </block>
 </view>

@@ -53,6 +53,7 @@ import {
   buildCloseFormalEvent,
   closePayloadForStoredRequest,
 } from './closeLoanActions.js';
+import { assertKnownCreateLoanRequest } from './createKnownLoanRequest.js';
 
 const TX_EVENT_PAGE_SIZE = 100;
 
@@ -96,8 +97,9 @@ function normalizeRepaymentRequestInput(input: unknown): RepaymentRequestInput {
   };
 }
 
-function isSupportedKnownChangeType(type: string): boolean {
+function isSupportedKnownRequestType(type: string): boolean {
   return (
+    type === LedgerRequestType.CREATE_LOAN ||
     type === LedgerRequestType.PRINCIPAL_REPAY ||
     type === LedgerRequestType.PRINCIPAL_ADD ||
     type === LedgerRequestType.RATE_CHANGE ||
@@ -106,21 +108,25 @@ function isSupportedKnownChangeType(type: string): boolean {
   );
 }
 
-function assertSupportedKnownChangeRequest(
-  request: LedgerRequest,
-): asserts request is LedgerRequest & { loanId: string } {
-  if (!isSupportedKnownChangeType(request.type)) {
+function assertSupportedKnownRequest(request: LedgerRequest): void {
+  if (!isSupportedKnownRequestType(request.type)) {
     throw new AppError(
       ErrorCode.INVALID_STATE,
-      'Request type is not implemented by the known-counterparty change workflow',
+      'Request type is not implemented by the known-counterparty workflow',
     );
   }
   if (request.requiresInitiatorVerify) {
     throw new AppError(
       ErrorCode.INVALID_STATE,
-      'Known Loan changes must not use initiator verification',
+      'First-contact requests use invite acceptance and initiator verification',
     );
   }
+
+  if (request.type === LedgerRequestType.CREATE_LOAN) {
+    assertKnownCreateLoanRequest(request);
+    return;
+  }
+
   if (request.loanId == null) {
     throw new AppError(ErrorCode.INVALID_STATE, 'Loan change request has no Loan');
   }
@@ -180,7 +186,7 @@ function purposeForRequest(request: LedgerRequest): EventPurpose {
     case LedgerRequestType.CLOSE_LOAN:
       return 'loan-close';
     default:
-      throw new AppError(ErrorCode.INVALID_STATE, 'Unsupported Loan change request type');
+      throw new AppError(ErrorCode.INVALID_STATE, 'Request has no single formal event');
   }
 }
 
@@ -290,7 +296,6 @@ function buildFormalEvent(params: {
   }
 }
 
-/** Any participant may propose that principal has been repaid; the other side confirms. */
 export async function createRepaymentRequest(
   ctx: ActionContext,
   input: unknown,
@@ -309,11 +314,6 @@ export async function createRepaymentRequest(
   });
 }
 
-/**
- * Confirm an implemented known-counterparty Loan change in one transaction.
- * Balance-sensitive mutations rebuild the complete formal history from this
- * same transaction snapshot before append.
- */
 export async function acceptRequest(
   ctx: ActionContext,
   input: unknown,
@@ -324,11 +324,20 @@ export async function acceptRequest(
   return ctx.repo.runTransaction(async (tx) => {
     const request = await tx.getRequest(requestId);
     if (!request) throw new AppError(ErrorCode.NOT_FOUND, 'LedgerRequest not found');
-    assertSupportedKnownChangeRequest(request);
+    assertSupportedKnownRequest(request);
+    if (request.type === LedgerRequestType.CREATE_LOAN) {
+      throw new AppError(
+        ErrorCode.INVALID_STATE,
+        'Known CREATE_LOAN must be accepted through acceptKnownLoanRequest',
+      );
+    }
 
     if (request.status === LedgerRequestStatus.APPLIED) {
       if (actor._id !== request.counterpartyUserId) {
         throw new AppError(ErrorCode.FORBIDDEN, 'Only the counterparty may accept this request');
+      }
+      if (request.loanId == null) {
+        throw new AppError(ErrorCode.INVALID_STATE, 'Applied Loan change has no Loan');
       }
       const event = findAppliedEvent(
         await readAllTransactionEvents(tx, request.loanId),
@@ -344,6 +353,9 @@ export async function acceptRequest(
     }
 
     assertCanRespondToKnownCounterpartyRequest(request, actor._id);
+    if (request.loanId == null) {
+      throw new AppError(ErrorCode.INVALID_STATE, 'Loan change request has no Loan');
+    }
     const loan = await tx.getLoan(request.loanId);
     if (!loan) throw new AppError(ErrorCode.NOT_FOUND, 'Loan not found');
     if (loan.status !== LoanStatus.ACTIVE) {
@@ -375,7 +387,7 @@ export async function acceptRequest(
     const event = (
       await tx.appendEventIdempotent(
         buildFormalEvent({
-          request,
+          request: request as LedgerRequest & { loanId: string },
           loan,
           actorUserId: actor._id,
           sequence,
@@ -414,7 +426,7 @@ export async function rejectRequest(
   return ctx.repo.runTransaction(async (tx) => {
     const request = await tx.getRequest(requestId);
     if (!request) throw new AppError(ErrorCode.NOT_FOUND, 'LedgerRequest not found');
-    assertSupportedKnownChangeRequest(request);
+    assertSupportedKnownRequest(request);
     if (request.status === LedgerRequestStatus.REJECTED) {
       if (actor._id !== request.counterpartyUserId) {
         throw new AppError(ErrorCode.FORBIDDEN, 'Only the counterparty may reject this request');
@@ -443,7 +455,6 @@ export async function cancelRequest(
   return ctx.repo.runTransaction(async (tx) => {
     const request = await tx.getRequest(requestId);
     if (!request) throw new AppError(ErrorCode.NOT_FOUND, 'LedgerRequest not found');
-    assertSupportedKnownChangeRequest(request);
     if (request.status === LedgerRequestStatus.CANCELLED) {
       if (actor._id !== request.proposerUserId) {
         throw new AppError(ErrorCode.FORBIDDEN, 'Only the proposer may cancel this request');

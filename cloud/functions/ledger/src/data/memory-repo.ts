@@ -149,6 +149,11 @@ export class MemoryRepo implements LedgerRepo {
     return found ? cloneValue(found) : null;
   }
 
+  async getUserById(userId: string): Promise<User | null> {
+    const user = this.state.users.get(userId);
+    return user ? cloneValue(user) : null;
+  }
+
   async createUserIfOpenidFree(user: NewUser): Promise<CreateResult<User>> {
     const existing = [...this.state.users.values()].find(
       (item) => item.openid === user.openid,
@@ -228,6 +233,19 @@ export class MemoryRepo implements LedgerRepo {
             request.counterpartyUserId === params.userId) ||
           (request.status === 'PENDING_INITIATOR_VERIFY' &&
             request.proposerUserId === params.userId),
+      ),
+      params.page,
+    );
+  }
+
+  async listProposedPendingRequestsForUser(
+    params: Parameters<LedgerRepo['listProposedPendingRequestsForUser']>[0],
+  ): Promise<Page<LedgerRequest>> {
+    return pageCreatedAt(
+      [...this.state.requests.values()].filter(
+        (request) =>
+          request.status === 'PENDING' &&
+          request.proposerUserId === params.userId,
       ),
       params.page,
     );

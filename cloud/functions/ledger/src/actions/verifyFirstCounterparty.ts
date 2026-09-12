@@ -1,19 +1,17 @@
 import {
-  CURRENCY,
-  LEDGER_TIMEZONE,
-  LOAN_EVENT_SCHEMA_VERSION,
   LedgerRequestStatus,
-  LoanEventType,
-  LoanStatus,
   type LedgerRequest,
   type Loan,
 } from '@family-ledger/shared';
 import { AppError, ErrorCode } from '../errors.js';
 import { assertCanVerifyFirstContact } from '../domain/permissions.js';
-import { eventIdempotencyKey } from '../data/event-idempotency.js';
 import type { ActionContext } from './action-context.js';
 import { requireCurrentUser } from './action-context.js';
 import { assertBoundFirstContactCreateLoanRequest } from './create-loan-common.js';
+import {
+  createLoanWithGenesis,
+  type BoundCreateLoanRequest,
+} from './apply-create-loan.js';
 
 export interface VerifyFirstCounterpartyResult {
   request: LedgerRequest;
@@ -53,9 +51,8 @@ async function resolveAppliedRetry(
 }
 
 /**
- * Final first-contact verification. This is the first R5 operation that creates
- * formal ledger history, so Loan + both genesis events + request APPLIED are one
- * atomic transaction.
+ * Final first-contact verification. Loan + both genesis events + request APPLIED
+ * are committed atomically.
  */
 export async function verifyFirstCounterparty(
   ctx: ActionContext,
@@ -86,53 +83,11 @@ export async function verifyFirstCounterparty(
       assertCanVerifyFirstContact(request, actor._id);
       assertBoundFirstContactCreateLoanRequest(request);
 
-      const payload = request.payload;
-      const loan = await tx.createLoan({
-        lenderUserId: payload.lenderUserId,
-        borrowerUserId: payload.borrowerUserId,
-        currency: CURRENCY,
-        ledgerTimezone: LEDGER_TIMEZONE,
-        createdFromRequestId: request._id,
-        status: LoanStatus.ACTIVE,
-        createdAt: ctx.now,
-        closedAt: null,
-      });
-
-      const [principalSequence, rateSequence] = await tx.allocateEventSequences(
-        loan._id,
-        2,
-      );
-      if (principalSequence == null || rateSequence == null) {
-        throw new AppError(ErrorCode.INTERNAL, 'Failed to allocate genesis event sequences');
-      }
-
-      await tx.appendEventIdempotent({
-        loanId: loan._id,
-        eventType: LoanEventType.PRINCIPAL_ADD,
-        amountFen: payload.initialPrincipalFen,
-        effectiveDate: payload.proposedEffectiveDate,
-        sourceRequestId: request._id,
-        createdBy: request.proposerUserId,
-        confirmedBy: request.counterpartyUserId,
-        sequence: principalSequence,
-        idempotencyKey: eventIdempotencyKey(request._id, 'initial-principal'),
-        createdAt: ctx.now,
-        schemaVersion: LOAN_EVENT_SCHEMA_VERSION,
-      });
-
-      await tx.appendEventIdempotent({
-        loanId: loan._id,
-        eventType: LoanEventType.RATE_CHANGE,
-        amountFen: null,
-        rate: payload.rate,
-        effectiveDate: payload.proposedEffectiveDate,
-        sourceRequestId: request._id,
-        createdBy: request.proposerUserId,
-        confirmedBy: request.counterpartyUserId,
-        sequence: rateSequence,
-        idempotencyKey: eventIdempotencyKey(request._id, 'initial-rate'),
-        createdAt: ctx.now,
-        schemaVersion: LOAN_EVENT_SCHEMA_VERSION,
+      const loan = await createLoanWithGenesis({
+        tx,
+        request: request as BoundCreateLoanRequest,
+        confirmedByUserId: request.counterpartyUserId,
+        now: ctx.now,
       });
 
       const applied: LedgerRequest = {
@@ -147,8 +102,6 @@ export async function verifyFirstCounterparty(
       return { request: applied, loan };
     });
   } catch (error) {
-    // If a concurrent verification won a DB uniqueness race, resolve to the
-    // committed APPLIED state instead of surfacing a false failure.
     const committed = await resolveAppliedRetry(ctx, requestId, actor._id);
     if (committed) return committed;
     throw error;

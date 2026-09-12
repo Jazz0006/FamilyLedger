@@ -1,17 +1,63 @@
-.row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-top: 24rpx;
+.pending {
+  border: 2rpx solid #f5b941;
 }
-.row .label {
-  margin-right: 12rpx;
-}
-.total {
+
+.pending-count {
+  min-width: 52rpx;
+  height: 52rpx;
+  border-radius: 26rpx;
+  background: #fff3cd;
+  color: #8a5a00;
+  text-align: center;
+  line-height: 52rpx;
   font-weight: 700;
-  border-top: 2rpx solid #eee;
-  padding-top: 24rpx;
 }
-button {
-  margin-top: 32rpx;
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20rpx;
+}
+
+.summary-grid .card {
+  margin-bottom: 0;
+}
+
+.summary-card .amount-hero {
+  font-size: 44rpx;
+}
+
+.home-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16rpx;
+  margin: 28rpx 0;
+}
+
+.home-actions button {
+  margin: 0;
+}
+
+.loan-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24rpx;
+  padding: 24rpx 0;
+  border-top: 1rpx solid #eeeeee;
+}
+
+.loan-row:first-of-type {
+  border-top: 0;
+}
+
+.counterparty {
+  font-size: 32rpx;
+  font-weight: 600;
+}
+
+.loan-amount {
+  font-size: 32rpx;
+  font-weight: 700;
+  white-space: nowrap;
 }

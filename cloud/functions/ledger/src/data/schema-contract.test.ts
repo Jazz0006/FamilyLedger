@@ -1,8 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { Collections } from '@family-ledger/shared';
-import { V2_REQUIRED_INDEXES } from './schema-contract.js';
+import {
+  V2_REQUIRED_COLLECTIONS,
+  V2_REQUIRED_INDEXES,
+  buildCreateIndexesCommands,
+} from './schema-contract.js';
 
 describe('v2 persistence index contract', () => {
+  it('declares every core runtime collection exactly once', () => {
+    expect(V2_REQUIRED_COLLECTIONS).toEqual([
+      Collections.USERS,
+      Collections.LOANS,
+      Collections.LEDGER_REQUESTS,
+      Collections.LOAN_EVENTS,
+      Collections.INVITE_TOKENS,
+      Collections.AUDIT_LOGS,
+    ]);
+    expect(new Set(V2_REQUIRED_COLLECTIONS).size).toBe(
+      V2_REQUIRED_COLLECTIONS.length,
+    );
+    expect(V2_REQUIRED_COLLECTIONS).not.toContain(Collections.RATE_REFERENCES);
+  });
+
   it('keeps request and event idempotency keys unique', () => {
     expect(
       V2_REQUIRED_INDEXES.find(
@@ -52,5 +71,29 @@ describe('v2 persistence index contract', () => {
         '_id',
       ]);
     }
+  });
+
+  it('builds Mongo createIndexes commands directly from the authoritative contract', () => {
+    const commands = buildCreateIndexesCommands();
+    const loanCommand = commands.find(
+      (command) => command.createIndexes === Collections.LOANS,
+    );
+    expect(loanCommand?.indexes).toContainEqual({
+      name: 'lender_status_created_cursor',
+      unique: false,
+      key: {
+        lenderUserId: 1,
+        status: 1,
+        createdAt: -1,
+        _id: -1,
+      },
+    });
+
+    const allGeneratedNames = commands.flatMap((command) =>
+      command.indexes.map((index) => index.name),
+    );
+    expect(allGeneratedNames).toEqual(
+      V2_REQUIRED_INDEXES.map((index) => index.name),
+    );
   });
 });

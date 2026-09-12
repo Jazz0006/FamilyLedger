@@ -1,7 +1,21 @@
-<view class="card">
-  <text class="label">首次绑定</text>
-  <view wx:if="{{displayName}}" class="amount-hero">{{displayName}}</view>
-  <text wx:else>这是你的家庭借款账户</text>
-  <text wx:if="{{error}}">{{error}}</text>
-  <button class="btn-primary" bindtap="confirm" disabled="{{loading}}">确认是我</button>
+<view class="page">
+  <view wx:if="{{loading}}" class="card"><text class="muted">正在读取邀请…</text></view>
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+
+  <view wx:if="{{accepted}}" class="card">
+    <view class="section-title">你已接受邀请</view>
+    <text class="muted">为了防止发错人，这笔往来还需要发起人再次确认你的身份，之后才会进入正式账本。</text>
+    <button class="btn-primary" bindtap="goHome">返回来往账</button>
+  </view>
+
+  <view wx:elif="{{preview && !loading}}" class="card">
+    <view class="section-title">确认这笔往来</view>
+    <view class="relation">{{preview.relationText}}</view>
+    <view class="amount-hero">{{preview.principal}}</view>
+    <view class="detail-row"><text class="label">年利率</text><text>{{preview.rate}}%</text></view>
+    <view class="detail-row"><text class="label">生效日期</text><text>{{preview.effectiveDate}}</text></view>
+    <view wx:if="{{preview.note}}" class="detail-row"><text class="label">备注</text><text>{{preview.note}}</text></view>
+    <text class="warning">只有当你确认对方和金额都正确时才接受。接受邀请不会自动转账。</text>
+    <button class="btn-primary" loading="{{accepting}}" disabled="{{accepting}}" bindtap="accept">确认是我，接受邀请</button>
+  </view>
 </view>

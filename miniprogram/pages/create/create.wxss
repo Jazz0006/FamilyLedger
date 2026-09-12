@@ -1,0 +1,25 @@
+.choice-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16rpx;
+  margin-bottom: 20rpx;
+}
+
+.choice {
+  margin: 0;
+  background: #f1f1f2;
+  color: #333333;
+  border-radius: 14rpx;
+  font-size: 28rpx;
+}
+
+.choice.active {
+  background: #e7f7ee;
+  color: #067647;
+  border: 2rpx solid #07c160;
+}
+
+.note {
+  min-height: 140rpx;
+  width: auto;
+}

@@ -12,20 +12,31 @@ Use these documents in order for their respective concerns:
 4. `AGENTS.md` — engineering boundaries
 5. milestone handoff/progress docs — current execution state
 
-The v1.1 family-loan code/spec is historical reference only. Do not preserve its API, family/admin model, collection schema, or unfinished actions for compatibility.
+The v1.1 family-loan code/spec is historical reference only. Do not preserve its API, family/admin model, collection schema, UI or unfinished actions for compatibility.
 
 ## Current status
 
-R1 — Clean v2 Domain Rewrite is implemented on the rewrite branch.
+R1-R11 are implemented on the stacked v2 rewrite branches. R12 cutover is in progress on `codex/v2-r12-cutover-audit`.
 
-Active TypeScript server/domain code no longer contains the old family/admin action layer or v1 repository contract. The existing Mini Program pages are still the old UI and are temporary reference only; do not let them drive v2 server/domain design.
+Current R12 state:
 
-The cloud router is intentionally disabled during R1 and returns `INVALID_STATE` until new v2 server actions are implemented. Do not restore old actions to make the UI appear functional.
+- cutover audit completed;
+- v2 cloud router is active and exposes implemented product actions;
+- UI-facing user data uses a safe `UserDisplayProfile` rather than exposing OPENID;
+- known counterparties are derived only from existing shared Loans;
+- known-counterparty CREATE_LOAN is implemented with ordinary bilateral confirmation;
+- the old Mini Program `admin-*` pages are deleted;
+- active Mini Program pages are `home`, `create`, `detail`, `confirm` and `bind`;
+- first-contact invite tokens are high-entropy bearer credentials; the server stores only hashes;
+- unchanged client retries reuse request idempotency identity and invite token;
+- GitHub Actions runs `npm ci`, build, typecheck and tests.
 
-Current checkpoint:
+The remaining R12 UI gap is dedicated detail-page proposal forms for repayment, principal add, rate change, Correction and Close. Real WeChat/CloudBase two-account and concurrency/index validation also remains mandatory before production cutover.
 
-- `docs/V2_R1_CLEAN_DOMAIN_PROGRESS_2026-09-12.md`
-- next: `docs/NEXT_DEVELOPMENT_HANDOFF_2026-09-12_V2_R2_STATE_MACHINE_PERMISSIONS_IDEMPOTENCY.md`
+Current execution records:
+
+- `docs/V2_R12_CUTOVER_AUDIT_2026-09-12.md`
+- `docs/V2_R12_CUTOVER_PROGRESS_2026-09-12.md` once present
 
 ## v2 domain rules
 
@@ -49,6 +60,7 @@ Current checkpoint:
 - Request application plus formal event creation must be transaction/CAS safe.
 - Idempotent retries with the same semantic payload return the same result; same key with a different semantic payload is a conflict.
 - Growing reads paginate; balance reconstruction must never use a truncated event stream.
+- First-contact bearer tokens must be generated from cryptographically secure randomness and persisted only as hashes server-side.
 
 ## Active v2 shared model
 
@@ -56,6 +68,7 @@ Core concepts:
 
 ```text
 User
+UserDisplayProfile
 Loan
 LedgerRequest
 LoanEvent
@@ -85,7 +98,7 @@ CANCELLED
 EXPIRED
 ```
 
-Target collections:
+Collections:
 
 ```text
 users
@@ -113,50 +126,48 @@ Repository Interfaces
 CloudBase Repository / Infrastructure
 ```
 
-Keep routers thin. Put business rules in focused pure/domain/action modules, CloudBase SDK calls in infrastructure, and money math in `packages/calc`.
+Keep routers thin. Put business rules in focused domain/action modules, CloudBase SDK calls in infrastructure, and money math in `packages/calc`.
 
-## R1 behavior that must not be undone
+## Do not reintroduce v1
 
 Do not reintroduce:
 
 - `UserRole.BORROWER/LENDER`;
 - `familyId` / `DEFAULT_FAMILY_ID`;
 - `bootstrapAdmin`;
-- admin-only direct `PRINCIPAL_ADD` or RATE_CHANGE;
-- v1 `LoanAccount`, `LoanTerm`, or `ChangeRequest` as active domain models;
-- v1 Repo/MemoryRepo/CloudBaseRepo contracts;
-- product-level default 5% rate fallback;
-- old `setupCollections` schema;
+- family-wide privileged views;
+- admin-only direct principal/rate writes;
+- v1 `LoanAccount`, `LoanTerm`, or `ChangeRequest` as active models;
+- v1 Repo contracts or collections;
+- product-level default 5% fallback;
+- old family invite/bind flows;
+- `admin-*` Mini Program pages;
 - compatibility branches or dual writes.
 
 Git history is sufficient preservation for removed v1 code.
 
-## Current development order
+## Current development direction
 
-1. R1 — clean v2 domain + remove obsolete v1 server layer — implemented, executable validation pending
-2. R2 — request state machine, permissions, idempotency fingerprint
-3. R3 — v2 Repo / MemoryRepo / CloudBaseRepo, pagination, transaction primitives
-4. R4 — `ensureUser`
-5. R5 — CREATE_LOAN invite/accept/verify/apply closed loop
-6. R6 — bidirectional home/query flows
-7. R7 — repayment
-8. R8 — principal add / rate change / correction / close
-9. R9 — remove remaining v1 UI/docs/deployment residue
-10. R10 — CPI source, export/backup, UI polish, two-account regression
+R1-R11 established the v2 backend/core. R12 owns cutover and hardening:
+
+1. R12A — cutover audit + UI-facing contracts + known-counterparty CREATE_LOAN — implemented.
+2. R12B — active v2 Mini Program shell and removal of v1 admin UI — implemented/in validation.
+3. Next UI slice — Loan-detail mutation proposal forms for repayment/principal add/rate change/Correction/Close.
+4. CloudBase environment hardening — provision/verify required indexes, transaction behavior and rollback semantics.
+5. Real two-account WeChat regression — first contact, known counterparty, both debt directions, consent/reject/cancel, concurrency.
+6. Remaining deployment/document/security cleanup.
 
 ## Testing
 
-Use tests-first for money, state transitions, permissions, idempotency, transaction-sensitive behavior, and event reconstruction.
+Use tests-first for money, state transitions, permissions, idempotency, transaction-sensitive behavior and event reconstruction.
 
-Most R2 behavior should be pure unit tests and must not depend on CloudBase. Use real CloudBase integration tests later for runtime OPENID, indexes, transactions, concurrent invite claim, and real two-user flows.
-
-Expected local/CI checks:
+Expected CI/local gate:
 
 ```bash
-npm install
+npm ci
 npm run build
 npm run typecheck
 npm test
 ```
 
-Do not claim those checks passed unless they were actually executed.
+Do not claim the current head passed until its actual CI run completed successfully. Unit/MemoryRepo success does not replace real CloudBase integration testing.

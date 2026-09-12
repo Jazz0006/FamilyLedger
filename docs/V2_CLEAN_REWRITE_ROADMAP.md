@@ -1,7 +1,7 @@
 # FamilyLedger v2 Clean Rewrite Roadmap
 
 **Status:** authoritative implementation roadmap for the v2 rewrite  
-**Date:** 2026-09-12 · refreshed through R11  
+**Date:** 2026-09-12 · refreshed through R12C  
 **Scope:** implementation strategy and sequencing
 
 Business meaning and implementation shape are governed by:
@@ -16,52 +16,48 @@ This roadmap owns development sequencing. v2 is a **clean rewrite of product/dom
 
 ## 1. Non-negotiable rewrite decision
 
-v1.1 was a short-lived proof of concept. It has no production compatibility obligation.
+v1.1 was a short-lived proof of concept with no production compatibility obligation.
 
 Therefore:
 
 - no backward-compatible v1.1 API layer;
-- no permanent dual-model support;
-- no dual writes to v1.1 and v2 collections;
+- no permanent dual-model support or dual writes;
 - no `familyId` / legacy-role compatibility branches;
-- no effort to complete unfinished v1.1 business flows;
+- no effort to finish obsolete v1.1 business flows;
 - no migration framework for disposable development/test data;
-- Git history is the archive of v1.1.
+- Git history is the archive of removed v1.1 code.
 
-If valuable real records are ever discovered, handle them through a separate one-shot import with explicit provenance. Do not distort v2 to fit old data.
+If valuable real records are ever discovered, handle them through a separate one-shot import/export with explicit provenance. Do not distort v2 to fit old data.
 
 ---
 
 ## 2. Reuse by semantic fit
 
-Worth reusing:
+Keep/reuse when semantics still match:
 
-- `packages/calc` mathematical approach and deterministic tests;
-- Fen integer money representation;
+- `packages/calc` deterministic mathematical approach;
+- Fen integer money;
 - Decimal-based interest calculation;
-- date/timezone helpers whose semantics still match v2;
+- date/timezone helpers;
 - runtime OPENID identity boundary;
 - token hashing/crypto helpers;
 - CloudBase build/deploy plumbing;
 - generic error/response utilities;
 - MemoryRepo testing approach;
-- append-only event-ledger principle;
-- audit-log and idempotency concepts.
+- append-only event ledger;
+- audit and idempotency concepts.
 
 Disposable v1 product abstractions include:
 
 - global `UserRole`;
 - `familyId` / `DEFAULT_FAMILY_ID`;
-- `LoanAccount`;
-- `LoanTerm` as truth;
-- `ChangeRequest`;
-- `bootstrapAdmin`;
-- family-scoped queries;
-- admin-only authorization;
-- direction-based confirmation;
-- family invite semantics;
+- `LoanAccount`, `LoanTerm` as truth, `ChangeRequest`;
+- `bootstrapAdmin` and admin-only authorization;
+- family-scoped queries and family-wide privileged views;
+- direction-based unilateral confirmation rules;
+- family invite/bind semantics;
 - admin/family Mini Program pages;
-- v1 router/API contracts.
+- v1 router/API contracts and collections.
 
 ---
 
@@ -79,10 +75,10 @@ Repository Interfaces
 CloudBase Infrastructure
 ```
 
-Active v2 product/domain concepts:
+Active v2 concepts:
 
 ```text
-User
+User / UserDisplayProfile
 Loan
 LedgerRequest
 LoanEvent
@@ -100,137 +96,162 @@ No further v1 business feature development.
 
 ### R1 — Clean v2 domain rewrite — DONE / Draft PR #1
 
-Established v2 shared types, collection names, schema-v2 events and explicit RateSnapshot. Removed family/admin/global-role concepts from the active server/domain layer and removed the implicit historical 5% calculation fallback.
+Established v2 shared types/collections/schema-v2 events and explicit RateSnapshot. Removed family/admin/global-role concepts from active server/domain code and removed implicit 5% fallback.
 
 ### R2 — State machine / permissions / idempotency — DONE / Draft PR #2
 
-Implemented pure rules for request transitions, known-counterparty and first-contact flows, participant permissions, canonical semantic fingerprints, idempotent retry and same-key/different-payload conflict.
+Implemented explicit request transitions, participant permissions, first-contact/known-counterparty rules, canonical semantic fingerprints and same-key/different-payload conflict.
 
 ### R3 — Persistence foundation — DONE / Draft PR #3
 
-Implemented v2 `LedgerRepo` / `LedgerTransaction`, `MemoryRepo`, `CloudBaseRepo`, cursor pagination, transaction primitives, deterministic event keys, per-Loan sequence allocation and schema/index contracts.
+Implemented `LedgerRepo`, `LedgerTransaction`, `MemoryRepo`, `CloudBaseRepo`, cursor pagination, transaction primitives, deterministic event keys, per-Loan sequence allocation and executable index contract.
 
-Current lockfile boundary: `@cloudbase/node-sdk 3.18.3` + `@cloudbase/database 1.4.3`.
+Current locked baseline remains `@cloudbase/node-sdk 3.18.3` + `@cloudbase/database 1.4.3`; SDK migration is deliberately separate from product semantics.
 
 ### R4 — `ensureUser` — DONE / Draft PR #4
 
 Runtime OPENID → ordinary v2 User. No admin bootstrap, role assignment or family initialization.
 
-### R5 — CREATE_LOAN first-contact vertical slice — DONE / Draft PR #5
-
-Implemented:
+### R5 — CREATE_LOAN first-contact slice — DONE / Draft PR #5
 
 ```text
 createLoanRequest
 → createLoanInvite
 → previewInvite
-→ invitee claim/accept
+→ invitee claim
 → PENDING_INITIATOR_VERIFY
-→ proposer verifies identity
+→ proposer verifies claimant
 → atomic Loan + initial principal + initial rate + APPLIED
 ```
 
-No Loan exists before final first-contact verification.
+No Loan exists before final initiator verification.
 
 ### R6 — Read model / bidirectional home — DONE / Draft PR #6
 
-Implemented `getLoan`, `listLoans`, `listLoanEvents`, `listPendingRequests`, and `getHomeSummary`. One shared Loan/event stream projects as receivable to lender and payable to borrower. Growing reads follow all cursor pages and use `packages/calc` as the money engine.
+Implemented participant-safe Loan/read actions and shared event-stream projections. One Loan is receivable to lender and payable to borrower. Growing reads paginate and money projections use `packages/calc`.
 
 ### R7 — PRINCIPAL_REPAY — DONE / Draft PR #7
 
-Either participant may propose principal repayment; the other confirms. Acceptance reads authoritative history inside the transaction. R11 later strengthened this path so a backdated repayment cannot create a hidden negative-principal interval later in the existing timeline.
+Either participant may propose repayment; counterparty confirmation applies it. Acceptance rebuilds authoritative transaction-scoped history and prevents hidden negative-principal intervals.
 
 ### R8 — PRINCIPAL_ADD + RATE_CHANGE — DONE / Draft PR #8
 
-Added mutually confirmed principal addition and rate change. Same-effective-date rate precedence is deterministic by formal event sequence in calc and read projections.
+Added mutually confirmed principal addition and rate change. Same-effective-date rate precedence is deterministic by formal event sequence.
 
 ### R9 — CORRECTION / CLOSE semantics — DONE / Draft PR #9
 
-Defined append-only Correction and mutually confirmed final-settlement Close semantics before production implementation.
-
-Key decisions:
-
-- Correction has exactly one dimension: principal or rate;
-- Correction never edits/deletes target history;
-- Correction effective date derives from target event;
-- Close is a settlement boundary, not an invented payment;
-- principal must be zero at close;
-- server snapshots residual accrued interest;
-- accepted close means residual interest has been settled/waived/rounded/otherwise handled offline;
-- pre-close history remains reconstructable;
-- current projection at/after close is zero.
-
-See `docs/V2_R9_CORRECTION_CLOSE_SEMANTICS_DECISION_2026-09-12.md`.
+Locked append-only Correction and final-settlement Close semantics before implementation. See `docs/V2_R9_CORRECTION_CLOSE_SEMANTICS_DECISION_2026-09-12.md`.
 
 ### R10 — CORRECTION implementation — DONE / Draft PR #10
 
-Implemented:
-
-- discriminated `PRINCIPAL` / `RATE` Correction payload;
-- Correction request fingerprint projection without client effective date;
-- `createCorrectionRequest`;
-- complete transaction-scoped target lookup;
-- principal/rate target validation;
-- historical principal non-negative invariant;
-- current same-day rate-winner validation;
-- deterministic `<requestId>:correction` event;
-- accept/reject/cancel support;
-- same-dimension correction-of-correction;
-- append-only target preservation.
+Implemented typed principal/rate corrections, target validation, request fingerprinting, append-only correction events, historical principal non-negative validation and correction-of-correction rules.
 
 See `docs/V2_R10_CORRECTION_PROGRESS_2026-09-12.md`.
 
 ### R11 — CLOSE_LOAN implementation — DONE / Draft PR #11
 
-Implemented:
-
-- `CloseSettlementSnapshot` and `LoanEvent.closeSettlement`;
-- lifecycle-aware `LoanSummary.status / closeEffectiveDate / settledInterestFen`;
-- transaction-scoped typed Loan lifecycle update;
-- `createCloseLoanRequest`;
-- future/backdated-close validation;
-- complete transaction balance reconstruction;
-- zero-principal close requirement;
-- residual accrued-interest snapshot;
-- deterministic `<requestId>:loan-close` event;
-- atomic Loan `CLOSED` + request `APPLIED` + close event;
-- idempotent close retry without moving `closedAt`;
-- current CLOSED projection = zero from the close boundary onward;
-- pre-close historical projection preserved;
-- post-close mutations blocked;
-- close-vs-other-mutation concurrency serialized;
-- CloudBase Loan lifecycle update preserves infrastructure-only `nextEventSequence`;
-- shared full principal-timeline invariant now protects both repayment and principal Correction against hidden historical negative balances.
+Implemented zero-principal close requirement, residual-interest settlement snapshot, deterministic close event, atomic Loan/request/event transition, lifecycle-aware projections, idempotent retries and post-close mutation blocking.
 
 See `docs/V2_R11_CLOSE_LOAN_PROGRESS_2026-09-12.md`.
 
-### R12 — v2 cutover / UI / real CloudBase hardening — NEXT
+### R12 — v2 cutover / UI / real CloudBase hardening — IN PROGRESS
 
-R12 begins with a **read-only cutover audit** before deleting anything.
+#### R12 audit — DONE
 
-Audit and implementation scope:
+Completed read-only cutover audit and classified remaining runtime/UI/docs/setup assets as DELETE / REWRITE / KEEP.
 
-1. inventory all remaining v1 Mini Program pages/components/API calls;
-2. inventory obsolete setup/deploy scripts and collection assumptions;
-3. inventory README / CLAUDE / docs that still describe family/admin/v1 behavior;
-4. classify each residue as DELETE / REWRITE / KEEP;
-5. replace the Mini Program with v2 user/home/loan/request/invite flows;
-6. expose correction/close/history UX;
-7. provision and verify all required CloudBase collections/indexes;
-8. run real two-account invite/consent flows;
-9. run real CloudBase concurrency/rollback tests;
-10. remove remaining v1 runtime code and obsolete setup assets;
-11. finish deployment/security regression.
+Key result: the old Mini Program was still an entire v1 family/admin client while the backend was already v2, so it was treated as a rewrite rather than patched with compatibility adapters.
 
-Audit/export/backup UX may be implemented during R12 after the main cutover path is stable. CPI reference-source automation and cryptographic hash chaining remain post-core enhancements unless a concrete requirement promotes them.
+See `docs/V2_R12_CUTOVER_AUDIT_2026-09-12.md`.
+
+#### R12A — UI-facing server contract — DONE
+
+Implemented:
+
+- `UserDisplayProfile` without OPENID exposure;
+- internal `getUserById` persistence capability;
+- human-readable counterparty profiles on Loan/pending/invite reads;
+- `listKnownCounterparties` derived only from existing shared Loans;
+- `createKnownLoanRequest` / `acceptKnownLoanRequest` for subsequent Loans between already-known parties;
+- server-side relationship validation so knowledge of an arbitrary user ID does not create authorization;
+- shared CREATE_LOAN genesis writer for first-contact and known-counterparty paths;
+- first-contact proposer cancellation after claimant acceptance;
+- regression coverage for UI-facing profile/privacy and relationship boundaries.
+
+#### R12B — active v2 Mini Program cutover — DONE
+
+The active Mini Program now contains only v2 user flows:
+
+```text
+home
+create
+detail
+confirm
+bind
+```
+
+Implemented:
+
+- ordinary-user bootstrap;
+- bidirectional home totals and active Loan lists;
+- first-contact or known-counterparty new Loan creation in either debt direction;
+- cryptographically secure first-contact bearer token generation via WeChat secure randomness;
+- retry-stable request idempotency key + invite token for unchanged submissions;
+- invite preview/acceptance;
+- initiator claimant verify/cancel;
+- normal pending accept/reject;
+- known-counterparty CREATE_LOAN acceptance;
+- Loan summary and fully paginated formal event history;
+- physical deletion of all `admin-*` Mini Program pages;
+- v2 app/project naming and client documentation.
+
+#### R12C — Loan mutation proposal UI — DONE
+
+Loan detail now exposes proposal-only UI for:
+
+1. PRINCIPAL_REPAY;
+2. PRINCIPAL_ADD;
+3. RATE_CHANGE;
+4. PRINCIPAL Correction;
+5. RATE Correction;
+6. CLOSE_LOAN.
+
+R12C preserves the server-authoritative model:
+
+- form submission only creates `LedgerRequest`; it never applies formal ledger effects directly;
+- Yuan text is parsed to integer Fen and rate input becomes an explicit decimal-string snapshot;
+- mutation idempotency keys remain stable across unchanged network retries;
+- CLOSED Loans do not expose normal mutation entry points;
+- principal Correction selects only principal-affecting formal events;
+- rate Correction selects the current same-day rate winner and the confirmation UI shows the exact target event context;
+- Correction effective date remains derived from the selected target event, never supplied independently by the client;
+- Close is offered only when current principal is zero and no future formal event blocks the boundary; final authority remains server-side;
+- proposer-created PENDING requests are queryable through `listProposedRequests`, visible in the confirmation center and cancellable by the proposer;
+- first-contact proposals with no bound counterparty remain displayable as awaiting invite acceptance;
+- the home screen keeps request management discoverable even when there is nothing currently awaiting the user's own confirmation.
+
+Full workspace GitHub Actions (`npm ci`, build, typecheck, test) is green through R12C checkpoint `57d6626d2fabfbda07f007a985cfcb1245a9e83f`.
+
+#### R12D — real CloudBase / two-account hardening — NEXT
+
+- provision and verify all required v2 collections/indexes from `schema-contract.ts`;
+- verify runtime OPENID identity behavior;
+- verify real transaction commit/rollback semantics;
+- verify duplicate-key/error behavior against repository assumptions;
+- run concurrent invite claim / request application checks;
+- run real two-account WeChat flows in both debt directions;
+- validate share/invite paths on devices;
+- complete deployment/security regression and remove any remaining obsolete setup/docs residue.
+
+Audit/export/backup UX and CPI reference automation remain post-core unless a concrete product requirement promotes them.
 
 ---
 
 ## 5. Deletion-first guidance
 
-Prefer deletion whenever old code has no valid v2 responsibility.
+Prefer deletion whenever old code has no valid v2 responsibility. Do not create adapters merely to keep a legacy call site alive.
 
-Do not create adapters merely to keep a legacy call site alive. Temporary code is acceptable only when it keeps an adjacent rewrite checkpoint buildable and is not imported by new v2 modules.
+Temporary code is acceptable only when it keeps an adjacent rewrite checkpoint buildable and is not imported as a new v2 dependency.
 
 ---
 
@@ -241,7 +262,7 @@ Current v1 CloudBase content is presumed disposable development data unless expl
 Default v2 cutover:
 
 - use fresh v2 collections/indexes;
-- validate v2 with fresh test identities/data;
+- validate with fresh test identities/data;
 - do not convert family/admin records;
 - do not reinterpret unilateral v1 events as mutually confirmed history.
 
@@ -253,33 +274,34 @@ Before production cutover, coverage must include at minimum:
 
 - one User can be lender in one Loan and borrower in another;
 - unrelated User cannot read Loan/event/request details;
+- UI-facing relationship data never exposes OPENID;
+- arbitrary user IDs cannot bypass known-counterparty relationship validation;
+- first-contact invite token uses high-entropy secure randomness and stored hash only;
 - first-contact invite claim is single-winner;
 - first-contact accept does not create Loan before proposer verification;
-- request fingerprint idempotency/conflict behavior;
+- proposer can reject a wrong claimant by cancellation without creating a Loan;
+- proposer can see and cancel their own still-PENDING normal proposals;
+- request fingerprint/idempotent retry conflict behavior;
 - atomic CREATE_LOAN genesis set;
 - paginated histories reconstruct completely;
-- principal timeline never becomes negative after any accepted principal mutation;
+- principal timeline never becomes negative after accepted principal mutation;
 - principal add/rate change require mutual consent;
 - same-day rate sequence precedence is deterministic;
 - rejection/cancellation create no formal event;
 - Correction never edits target history;
-- backdated principal Correction cannot create a hidden historical negative interval;
-- rate Correction targets/supersedes the correct same-day winner;
-- Close requires zero principal;
-- Close snapshots residual accrued interest;
+- Close requires zero principal and snapshots residual accrued interest;
 - Close atomically transitions Loan + request + event;
 - CLOSED current projection is zero and does not continue accruing;
 - pre-close history remains reconstructable;
 - post-close mutation requests cannot apply;
+- full workspace `npm ci / build / typecheck / test` succeeds;
 - real CloudBase unique indexes and transaction behavior match MemoryRepo assumptions;
-- complete two-account Mini Program flow works on real WeChat identities.
-
-Full workspace `build/typecheck/test` plus real CloudBase two-account/concurrency validation remain merge/production gates.
+- complete two-account Mini Program flow works with real WeChat identities.
 
 ---
 
 ## 8. Immediate next task
 
-Start **R12 — read-only cutover audit** from the R11 checkpoint.
+Start **R12D — real CloudBase / two-account hardening** from the green R12C checkpoint.
 
-Do not immediately patch the old v1 UI. First identify every remaining legacy runtime/setup/document dependency and classify it as DELETE / REWRITE / KEEP. Then perform the cutover in small reviewable slices.
+Do not declare production cutover complete merely because workspace CI passes. R12D real CloudBase transaction/index/OPENID/share/two-account validation remains a separate mandatory gate.

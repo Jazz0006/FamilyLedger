@@ -71,6 +71,8 @@ export interface LedgerTransaction {
  */
 export interface LedgerRepo {
   getUserByOpenid(openid: string): Promise<User | null>;
+  /** Internal-only lookup used to build participant-authorized display projections. */
+  getUserById(userId: UserId): Promise<User | null>;
   createUserIfOpenidFree(user: NewUser): Promise<CreateResult<User>>;
 
   getLoan(loanId: string): Promise<Loan | null>;
@@ -87,6 +89,11 @@ export interface LedgerRepo {
     request: NewLedgerRequest,
   ): Promise<CreateResult<LedgerRequest>>;
   listActionableRequestsForUser(params: {
+    userId: UserId;
+    page: PageInput;
+  }): Promise<Page<LedgerRequest>>;
+  /** PENDING requests proposed by this user, for status display/cancellation. */
+  listProposedPendingRequestsForUser(params: {
     userId: UserId;
     page: PageInput;
   }): Promise<Page<LedgerRequest>>;

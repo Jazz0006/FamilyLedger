@@ -34,6 +34,13 @@ export interface User {
   updatedAt: EpochMillis;
 }
 
+/** Safe profile projection for participant-authorized UI reads. Never exposes OPENID. */
+export interface UserDisplayProfile {
+  userId: UserId;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
 export interface Loan {
   _id: LoanId;
   lenderUserId: UserId;

@@ -8,6 +8,7 @@ import {
   type LedgerRequest,
   type RateSnapshot,
   type User,
+  type UserDisplayProfile,
 } from '@family-ledger/shared';
 import { AppError, ErrorCode } from '../errors.js';
 import { hashToken } from '../crypto.js';
@@ -15,8 +16,9 @@ import { assertCreateLoanRequestStructure } from '../domain/validation.js';
 import { assertLedgerRequestTransition } from '../domain/request-state.js';
 import type { ActionContext } from './action-context.js';
 import { requireCurrentUser } from './action-context.js';
-import { ensureUser } from './ensureUser.js';
 import { bindFirstContactCounterparty } from './create-loan-common.js';
+import { ensureUser } from './ensureUser.js';
+import { requireUserDisplayProfile } from './user-display.js';
 
 const RAW_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
@@ -29,6 +31,7 @@ export interface CreateLoanInviteResult {
 export interface InvitePreview {
   requestId: string;
   proposerUserId: string;
+  proposer: UserDisplayProfile;
   unknownPartyRole: 'BORROWER' | 'LENDER';
   initialPrincipalFen: number;
   rate: RateSnapshot;
@@ -92,11 +95,6 @@ function assertPendingFirstContactRequest(request: LedgerRequest): void {
   assertCreateLoanRequestStructure(request);
 }
 
-/**
- * Issue a first-contact invite credential for a pending CREATE_LOAN request.
- * The caller supplies cryptographically-random rawToken; only its SHA-256 hash
- * is persisted. Reusing the same token is state-idempotent.
- */
 export async function createLoanInvite(
   ctx: ActionContext,
   input: unknown,
@@ -141,7 +139,6 @@ export async function createLoanInvite(
     const invite = await ctx.repo.createInvite(inviteData);
     return { invite, rawToken, created: true };
   } catch (error) {
-    // A same-token concurrent retry may lose the unique tokenHash race.
     const raced = await ctx.repo.getInviteByHash(tokenHash);
     if (
       raced &&
@@ -154,7 +151,6 @@ export async function createLoanInvite(
   }
 }
 
-/** Pure-read invite preview; possession of the token does not mutate anything. */
 export async function previewInvite(
   ctx: ActionContext,
   input: unknown,
@@ -176,6 +172,7 @@ export async function previewInvite(
   return {
     requestId: request._id,
     proposerUserId: request.proposerUserId,
+    proposer: await requireUserDisplayProfile(ctx.repo, request.proposerUserId),
     unknownPartyRole: payload.unknownPartyRole as 'BORROWER' | 'LENDER',
     initialPrincipalFen: payload.initialPrincipalFen,
     rate: payload.rate,
@@ -185,10 +182,6 @@ export async function previewInvite(
   };
 }
 
-/**
- * Claim an invite with the runtime-authenticated WeChat identity. The invite and
- * request binding are committed atomically; no Loan exists yet.
- */
 export async function acceptInviteRequest(
   ctx: ActionContext,
   input: unknown,
@@ -203,8 +196,6 @@ export async function acceptInviteRequest(
     throw new AppError(ErrorCode.INVITE_EXPIRED, 'Invite has expired');
   }
 
-  // Creating a normal User is harmless even if the later claim loses a race.
-  // Identity still comes only from ctx.openid; profile data is non-authoritative.
   const claimant = await ensureUser(ctx, {
     displayName: raw.displayName,
     avatarUrl: raw.avatarUrl,

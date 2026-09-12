@@ -32,11 +32,20 @@ import type {
 } from './repo.js';
 
 type Db = CallContext['db'];
-type DbTransaction = Parameters<Parameters<Db['runTransaction']>[0]>[0];
 type DbCommand = Db['command'];
+type DbCollection = ReturnType<Db['collection']>;
+
+interface DbTransactionAdapter {
+  collection(name: string): DbCollection;
+}
+
+interface DbRunTransactionAdapter {
+  runTransaction<T>(
+    work: (transaction: DbTransactionAdapter) => Promise<T>,
+  ): Promise<T>;
+}
 
 type LoanRecord = Loan & {
-  /** Infrastructure-only event sequence counter; never an accounting balance. */
   nextEventSequence: number;
 };
 
@@ -112,6 +121,10 @@ export class CloudBaseRepo implements LedgerRepo {
 
   async getUserByOpenid(openid: string): Promise<User | null> {
     return this.first<User>(Collections.USERS, { openid });
+  }
+
+  async getUserById(userId: string): Promise<User | null> {
+    return this.first<User>(Collections.USERS, { _id: userId });
   }
 
   async createUserIfOpenidFree(user: NewUser): Promise<CreateResult<User>> {
@@ -240,6 +253,38 @@ export class CloudBaseRepo implements LedgerRepo {
     );
   }
 
+  async listProposedPendingRequestsForUser(
+    params: Parameters<LedgerRepo['listProposedPendingRequestsForUser']>[0],
+  ): Promise<Page<LedgerRequest>> {
+    validatePageInput(params.page);
+    const _ = this.db.command;
+    const base = {
+      proposerUserId: params.userId,
+      status: LedgerRequestStatus.PENDING,
+    };
+
+    let where: object = base;
+    if (params.page.cursor) {
+      const cursor = decodeCreatedAtCursor(params.page.cursor);
+      where = _.or(
+        { ...base, createdAt: _.lt(cursor.createdAt) },
+        { ...base, createdAt: cursor.createdAt, _id: _.lt(cursor._id) },
+      ) as object;
+    }
+
+    const response = await this.db
+      .collection(Collections.LEDGER_REQUESTS)
+      .where(where)
+      .orderBy('createdAt', 'desc')
+      .orderBy('_id', 'desc')
+      .limit(params.page.limit)
+      .get();
+    return pageFromCreatedAtRows(
+      extractRows<LedgerRequest>(response),
+      params.page.limit,
+    );
+  }
+
   async listLoanEvents(
     params: Parameters<LedgerRepo['listLoanEvents']>[0],
   ): Promise<Page<LoanEvent>> {
@@ -277,7 +322,8 @@ export class CloudBaseRepo implements LedgerRepo {
   async runTransaction<T>(
     work: (tx: LedgerTransaction) => Promise<T>,
   ): Promise<T> {
-    return this.db.runTransaction(async (transaction) =>
+    const dbWithTransactions = this.db as unknown as DbRunTransactionAdapter;
+    return dbWithTransactions.runTransaction(async (transaction) =>
       work(new CloudBaseTransaction(transaction, this.db.command)),
     );
   }
@@ -287,7 +333,7 @@ class CloudBaseTransaction implements LedgerTransaction {
   private readonly sequenceCache = new Map<string, number>();
 
   constructor(
-    private readonly transaction: DbTransaction,
+    private readonly transaction: DbTransactionAdapter,
     private readonly command: DbCommand,
   ) {}
 
@@ -329,7 +375,6 @@ class CloudBaseTransaction implements LedgerTransaction {
   }
 
   async putLoan(loan: Loan): Promise<void> {
-    // Partial update preserves the infrastructure-only nextEventSequence field.
     await this.transaction
       .collection(Collections.LOANS)
       .doc(loan._id)

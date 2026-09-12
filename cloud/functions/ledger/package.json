@@ -8,7 +8,10 @@
     "build": "tsc --build",
     "clean": "tsc --build --clean",
     "test": "vitest run --passWithNoTests",
-    "bundle": "node scripts/bundle.mjs"
+    "bundle": "node scripts/bundle.mjs",
+    "schema:plan": "npm run build && node scripts/schema-plan.mjs",
+    "deployment:check": "node scripts/deployment-contract.mjs",
+    "r12d:smoke": "npm run build && node scripts/cloudbase-smoke.mjs"
   },
   "dependencies": {
     "@family-ledger/calc": "0.1.0",
