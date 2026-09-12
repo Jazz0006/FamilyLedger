@@ -1,7 +1,7 @@
 {
   "miniprogramRoot": "./",
   "projectname": "FamilyLedger",
-  "description": "家庭借款账本",
+  "description": "来往账：双方确认的熟人借款共享账本",
   "appid": "wxa6b778821b3ccbc9",
   "setting": {
     "urlCheck": true,
