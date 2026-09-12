@@ -3,6 +3,13 @@ import { CloudBaseRepo } from './data/cloudbase-repo.js';
 import { AppError, ErrorCode, type ApiResponse } from './errors.js';
 import { makeActionContext } from './actions/action-context.js';
 import { ensureUser } from './actions/ensureUser.js';
+import { createLoanRequest } from './actions/createLoanRequest.js';
+import {
+  acceptInviteRequest,
+  createLoanInvite,
+  previewInvite,
+} from './actions/loanInvites.js';
+import { verifyFirstCounterparty } from './actions/verifyFirstCounterparty.js';
 
 type Event = {
   action?: string;
@@ -10,11 +17,9 @@ type Event = {
 };
 
 /**
- * v2 ledger router.
- *
- * R4 deliberately exposes only ensureUser. Formal ledger mutation actions remain
- * unavailable until their own milestones establish the required transaction and
- * consent semantics.
+ * v2 ledger router. Only actions whose v2 authority/transaction semantics have
+ * been implemented are exposed here; unavailable legacy/future actions fail
+ * closed instead of falling back to v1 behavior.
  */
 export async function main(
   event: Event,
@@ -31,6 +36,16 @@ export async function main(
     switch (event?.action) {
       case 'ensureUser':
         return ok(await ensureUser(ctx, event.payload));
+      case 'createLoanRequest':
+        return ok(await createLoanRequest(ctx, event.payload));
+      case 'createLoanInvite':
+        return ok(await createLoanInvite(ctx, event.payload));
+      case 'previewInvite':
+        return ok(await previewInvite(ctx, event.payload));
+      case 'acceptInviteRequest':
+        return ok(await acceptInviteRequest(ctx, event.payload));
+      case 'verifyFirstCounterparty':
+        return ok(await verifyFirstCounterparty(ctx, event.payload));
       default:
         throw new AppError(
           ErrorCode.INVALID_STATE,
