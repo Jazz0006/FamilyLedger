@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   LedgerRequestType,
   RateSource,
+  type CorrectionPayload,
   type CreateLoanPayload,
   type RateChangePayload,
 } from '@family-ledger/shared';
@@ -46,13 +47,28 @@ describe('request fingerprint', () => {
     expect(computeRequestFingerprint(a)).toBe(computeRequestFingerprint(b));
   });
 
-  it.each([
-    ['amount', { payload: { ...baseInput().payload, amountFen: 12_301 } }],
-    ['loan', { loanId: 'loan-2' }],
-    ['counterparty', { counterpartyUserId: 'u3' }],
-  ])('changes when semantic %s changes', (_name, patch) => {
+  it('changes when amount changes', () => {
     const a = baseInput();
-    const b = { ...a, ...patch } as RequestFingerprintInput;
+    const b: RequestFingerprintInput = {
+      ...a,
+      payload: {
+        amountFen: 12_301,
+        proposedEffectiveDate: '2026-09-12',
+        note: 'repayment',
+      },
+    };
+    expect(computeRequestFingerprint(a)).not.toBe(computeRequestFingerprint(b));
+  });
+
+  it('changes when Loan changes', () => {
+    const a = baseInput();
+    const b: RequestFingerprintInput = { ...a, loanId: 'loan-2' };
+    expect(computeRequestFingerprint(a)).not.toBe(computeRequestFingerprint(b));
+  });
+
+  it('changes when counterparty changes', () => {
+    const a = baseInput();
+    const b: RequestFingerprintInput = { ...a, counterpartyUserId: 'u3' };
     expect(computeRequestFingerprint(a)).not.toBe(computeRequestFingerprint(b));
   });
 
@@ -116,19 +132,20 @@ describe('request fingerprint', () => {
   });
 
   it('includes correction target', () => {
+    const payload: CorrectionPayload = {
+      targetEventId: 'event-1',
+      principalDeltaFen: -500,
+      proposedEffectiveDate: '2026-09-12',
+      reason: 'fix',
+    };
     const a: RequestFingerprintInput = {
       ...baseInput(),
       type: LedgerRequestType.CORRECTION,
-      payload: {
-        targetEventId: 'event-1',
-        principalDeltaFen: -500,
-        proposedEffectiveDate: '2026-09-12',
-        reason: 'fix',
-      },
+      payload,
     };
     const b: RequestFingerprintInput = {
       ...a,
-      payload: { ...a.payload, targetEventId: 'event-2' },
+      payload: { ...payload, targetEventId: 'event-2' },
     };
 
     expect(computeRequestFingerprint(a)).not.toBe(computeRequestFingerprint(b));
