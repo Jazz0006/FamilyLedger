@@ -15,6 +15,7 @@ import {
   encodeSequenceCursor,
   validatePageInput,
 } from './cursor.js';
+import { assertSameEventMutation } from './event-idempotency.js';
 import type {
   CreateResult,
   LedgerRepo,
@@ -123,8 +124,14 @@ export class MemoryRepo implements LedgerRepo {
   }
 
   async createUserIfOpenidFree(user: NewUser): Promise<CreateResult<User>> {
-    const existing = await this.getUserByOpenid(user.openid);
-    if (existing) return { item: existing, created: false };
+    // Deliberately avoid an await between uniqueness check and insert. In-memory
+    // tests should model a unique index rather than allowing two same-turn calls
+    // to both observe absence and create duplicate OPENIDs.
+    const existing = [...this.state.users.values()].find(
+      (item) => item.openid === user.openid,
+    );
+    if (existing) return { item: cloneValue(existing), created: false };
+
     const created: User = { ...cloneValue(user), _id: nextId(this.state, 'user') };
     this.state.users.set(created._id, created);
     return { item: cloneValue(created), created: true };
@@ -158,14 +165,18 @@ export class MemoryRepo implements LedgerRepo {
   async createRequestIdempotent(
     request: NewLedgerRequest,
   ): Promise<CreateResult<LedgerRequest>> {
-    const existing = await this.getRequestByIdempotencyKey(request.idempotencyKey);
+    // Same uniqueness rule as the real ledger_requests.idempotencyKey index.
+    const existing = [...this.state.requests.values()].find(
+      (item) => item.idempotencyKey === request.idempotencyKey,
+    );
     if (existing) {
       assertMatchingRequestFingerprint({
         storedFingerprint: existing.requestFingerprint,
         incomingFingerprint: request.requestFingerprint,
       });
-      return { item: existing, created: false };
+      return { item: cloneValue(existing), created: false };
     }
+
     const created: LedgerRequest = {
       ...cloneValue(request),
       _id: nextId(this.state, 'request'),
@@ -302,7 +313,10 @@ class MemoryTransaction implements LedgerTransaction {
     const existing = [...this.state.events.values()].find(
       (item) => item.idempotencyKey === event.idempotencyKey,
     );
-    if (existing) return { item: cloneValue(existing), created: false };
+    if (existing) {
+      assertSameEventMutation(existing, event);
+      return { item: cloneValue(existing), created: false };
+    }
 
     const sequenceCollision = [...this.state.events.values()].some(
       (item) => item.loanId === event.loanId && item.sequence === event.sequence,
