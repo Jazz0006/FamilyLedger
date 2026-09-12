@@ -43,7 +43,6 @@ describe('request fingerprint', () => {
       loanId: 'loan-1',
       type: LedgerRequestType.PRINCIPAL_REPAY,
     };
-
     expect(computeRequestFingerprint(a)).toBe(computeRequestFingerprint(b));
   });
 
@@ -94,7 +93,6 @@ describe('request fingerprint', () => {
         rate: { ...payload.rate, rateReferenceYear: 2025 },
       },
     };
-
     expect(computeRequestFingerprint(a)).not.toBe(computeRequestFingerprint(b));
   });
 
@@ -104,10 +102,7 @@ describe('request fingerprint', () => {
       lenderUserId: 'u1',
       unknownPartyRole: 'BORROWER',
       initialPrincipalFen: 100_000,
-      rate: {
-        annualEffectiveRate: '0.03',
-        rateSource: RateSource.MANUAL,
-      },
+      rate: { annualEffectiveRate: '0.03', rateSource: RateSource.MANUAL },
       proposedEffectiveDate: '2026-09-12',
     };
     const a: RequestFingerprintInput = {
@@ -127,15 +122,14 @@ describe('request fingerprint', () => {
         unknownPartyRole: 'LENDER',
       },
     };
-
     expect(computeRequestFingerprint(a)).not.toBe(computeRequestFingerprint(b));
   });
 
-  it('includes correction target', () => {
+  it('includes principal correction target, delta and reason', () => {
     const payload: CorrectionPayload = {
+      correctionKind: 'PRINCIPAL',
       targetEventId: 'event-1',
       principalDeltaFen: -500,
-      proposedEffectiveDate: '2026-09-12',
       reason: 'fix',
     };
     const a: RequestFingerprintInput = {
@@ -145,10 +139,57 @@ describe('request fingerprint', () => {
     };
     const b: RequestFingerprintInput = {
       ...a,
-      payload: { ...payload, targetEventId: 'event-2' },
+      payload: { ...payload, principalDeltaFen: -501 },
     };
-
     expect(computeRequestFingerprint(a)).not.toBe(computeRequestFingerprint(b));
+  });
+
+  it('includes rate correction replacement rate metadata', () => {
+    const payload: CorrectionPayload = {
+      correctionKind: 'RATE',
+      targetEventId: 'rate-event',
+      replacementRate: {
+        annualEffectiveRate: '0.04',
+        rateSource: RateSource.MANUAL,
+      },
+      reason: null,
+    };
+    const a: RequestFingerprintInput = {
+      ...baseInput(),
+      type: LedgerRequestType.CORRECTION,
+      payload,
+    };
+    const b: RequestFingerprintInput = {
+      ...a,
+      payload: {
+        ...payload,
+        replacementRate: { ...payload.replacementRate, annualEffectiveRate: '0.05' },
+      },
+    };
+    expect(computeRequestFingerprint(a)).not.toBe(computeRequestFingerprint(b));
+  });
+
+  it('does not hash server-derived Correction effectiveDate or UI-only fields', () => {
+    const payload: CorrectionPayload = {
+      correctionKind: 'PRINCIPAL',
+      targetEventId: 'event-1',
+      principalDeltaFen: -500,
+      reason: 'fix',
+    };
+    const a: RequestFingerprintInput = {
+      ...baseInput(),
+      type: LedgerRequestType.CORRECTION,
+      payload,
+    };
+    const extended = {
+      ...a,
+      payload: {
+        ...payload,
+        proposedEffectiveDate: '2099-01-01',
+        uiDraftId: 'client-only',
+      },
+    } as unknown as RequestFingerprintInput;
+    expect(computeRequestFingerprint(extended)).toBe(computeRequestFingerprint(a));
   });
 
   it('does not hash top-level transport/server-only fields passed accidentally', () => {
@@ -160,7 +201,6 @@ describe('request fingerprint', () => {
       createdAt: 123,
       requestFingerprint: 'old-value',
     } as RequestFingerprintInput;
-
     expect(computeRequestFingerprint(extended)).toBe(computeRequestFingerprint(a));
   });
 
@@ -173,17 +213,13 @@ describe('request fingerprint', () => {
         uiDraftId: 'temporary-client-only-value',
       },
     } as unknown as RequestFingerprintInput;
-
     expect(computeRequestFingerprint(extended)).toBe(computeRequestFingerprint(a));
   });
 
   it('normalizes absent optional note and explicit null note', () => {
     const withoutNote: RequestFingerprintInput = {
       ...baseInput(),
-      payload: {
-        amountFen: 12_300,
-        proposedEffectiveDate: '2026-09-12',
-      },
+      payload: { amountFen: 12_300, proposedEffectiveDate: '2026-09-12' },
     };
     const nullNote: RequestFingerprintInput = {
       ...withoutNote,
@@ -193,7 +229,6 @@ describe('request fingerprint', () => {
         note: null,
       },
     };
-
     expect(computeRequestFingerprint(withoutNote)).toBe(
       computeRequestFingerprint(nullNote),
     );
@@ -201,18 +236,13 @@ describe('request fingerprint', () => {
 
   it('treats same idempotency key with different fingerprint as CONFLICT', () => {
     const first = computeRequestFingerprint(baseInput());
-    const changed = computeRequestFingerprint({
-      ...baseInput(),
-      loanId: 'loan-other',
-    });
-
+    const changed = computeRequestFingerprint({ ...baseInput(), loanId: 'loan-other' });
     expect(() =>
       assertMatchingRequestFingerprint({
         storedFingerprint: first,
         incomingFingerprint: first,
       }),
     ).not.toThrow();
-
     try {
       assertMatchingRequestFingerprint({
         storedFingerprint: first,

@@ -1,7 +1,7 @@
 # FamilyLedger v2 Clean Rewrite Roadmap
 
 **Status:** authoritative implementation roadmap for the v2 rewrite  
-**Date:** 2026-09-12 · refreshed through R9  
+**Date:** 2026-09-12 · refreshed through R10  
 **Scope:** implementation strategy and sequencing
 
 Business meaning and implementation shape are governed by:
@@ -175,7 +175,7 @@ Added mutually confirmed principal addition and rate change.
 
 Also made same-effective-date rate precedence explicitly deterministic by formal event sequence in both calc and read projections.
 
-### R9 — CORRECTION / CLOSE semantics — CURRENT DESIGN CHECKPOINT
+### R9 — CORRECTION / CLOSE semantics — DONE / Draft PR #9
 
 No production mutation code in this milestone.
 
@@ -206,37 +206,44 @@ See:
 - updated product spec §13–16
 - updated `DATA_MODEL_V2.md`.
 
-### R10 — CORRECTION implementation — NEXT PRODUCTION MILESTONE
+### R10 — CORRECTION implementation — DONE / Draft PR #10
 
-Implement the narrowed discriminated Correction payload and one-event compensation flow.
+Implemented:
 
-Required work:
-
-- shared type change;
-- request fingerprint projection change;
+- discriminated `PRINCIPAL` / `RATE` Correction payload;
+- Correction request fingerprint projection without client effective date;
 - `createCorrectionRequest`;
-- target lookup from complete transaction event stream;
-- principal target/type validation;
+- complete transaction-scoped target lookup;
+- principal/rate target dimension validation;
 - historical principal non-negative replay validation;
-- rate target winner validation;
+- current same-day rate-winner validation;
 - deterministic `<requestId>:correction` event;
-- expand shared accept/reject/cancel support to CORRECTION;
-- read-model/history tests for compensation chains.
+- shared accept/reject/cancel support for CORRECTION;
+- correction-of-correction inside the same dimension;
+- append-only target preservation;
+- real-flow read-model/calc tests for principal and historical-rate compensation.
 
-### R11 — CLOSE_LOAN implementation
+See `docs/V2_R10_CORRECTION_PROGRESS_2026-09-12.md`.
+
+### R11 — CLOSE_LOAN implementation — NEXT PRODUCTION MILESTONE
 
 Required work:
 
 - `CloseSettlementSnapshot` shared type;
+- `LoanEvent.closeSettlement`;
 - `LoanSummary.status / closeEffectiveDate / settledInterestFen`;
-- repository transaction capability to update Loan lifecycle;
+- event-idempotency comparison must include close settlement snapshot;
+- transaction-scoped Loan lifecycle update capability;
 - `createCloseLoanRequest`;
 - full transaction balance/effective-date validation;
 - `LOAN_CLOSED` event;
 - atomic Loan CLOSED + request APPLIED;
 - current closed projection = zero;
 - historical pre-close projection remains available;
-- post-close mutations fail.
+- post-close mutations fail;
+- close-vs-other-mutation concurrency is serializable.
+
+See `docs/NEXT_DEVELOPMENT_HANDOFF_2026-09-12_V2_R11_CLOSE_LOAN.md`.
 
 ### R12 — v2 cutover / UI / real CloudBase hardening
 
@@ -308,6 +315,6 @@ Full workspace `build/typecheck/test` plus real CloudBase two-account/concurrenc
 
 ## 8. Immediate next task
 
-Start **R10 — CORRECTION implementation** from the R9 semantic checkpoint.
+Start **R11 — CLOSE_LOAN implementation** from the R10 Correction checkpoint.
 
-Do not implement CLOSE_LOAN first. Correction is the remaining mechanism needed to repair an invalid principal/rate history before a Loan can safely satisfy close conditions.
+Do not introduce a generic payment model. Close remains the explicit mutually confirmed settlement boundary defined in R9.

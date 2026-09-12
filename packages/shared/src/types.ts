@@ -81,13 +81,24 @@ export interface RateChangePayload {
   note?: string | null;
 }
 
-export interface CorrectionPayload {
+export interface PrincipalCorrectionPayload {
+  correctionKind: 'PRINCIPAL';
   targetEventId: EventId;
-  principalDeltaFen?: Fen;
-  replacementRate?: RateSnapshot;
-  proposedEffectiveDate: IsoDate;
+  /** Signed compensating principal delta in Fen. Must be non-zero. */
+  principalDeltaFen: Fen;
   reason?: string | null;
 }
+
+export interface RateCorrectionPayload {
+  correctionKind: 'RATE';
+  targetEventId: EventId;
+  replacementRate: RateSnapshot;
+  reason?: string | null;
+}
+
+export type CorrectionPayload =
+  | PrincipalCorrectionPayload
+  | RateCorrectionPayload;
 
 export interface CloseLoanPayload {
   proposedEffectiveDate: IsoDate;

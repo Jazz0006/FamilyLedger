@@ -4,6 +4,7 @@ import {
   LedgerRequestType,
   LoanEventType,
   LoanStatus,
+  type CorrectionPayload,
   type LedgerRequest,
   type LoanEvent,
   type PrincipalAddPayload,
@@ -41,6 +42,10 @@ import {
   assertIsoDate,
   normalizeRateSnapshot,
 } from './create-loan-common.js';
+import {
+  buildCorrectionFormalEvent,
+  correctionPayloadForStoredRequest,
+} from './correctionActions.js';
 
 const TX_EVENT_PAGE_SIZE = 100;
 
@@ -88,7 +93,8 @@ function isSupportedKnownChangeType(type: string): boolean {
   return (
     type === LedgerRequestType.PRINCIPAL_REPAY ||
     type === LedgerRequestType.PRINCIPAL_ADD ||
-    type === LedgerRequestType.RATE_CHANGE
+    type === LedgerRequestType.RATE_CHANGE ||
+    type === LedgerRequestType.CORRECTION
   );
 }
 
@@ -127,6 +133,9 @@ function assertSupportedKnownChangeRequest(
       assertIsoDate(payload.proposedEffectiveDate);
       return;
     }
+    case LedgerRequestType.CORRECTION:
+      correctionPayloadForStoredRequest(request);
+      return;
   }
 }
 
@@ -155,6 +164,8 @@ function purposeForRequest(request: LedgerRequest): EventPurpose {
       return 'principal-add';
     case LedgerRequestType.RATE_CHANGE:
       return 'rate-change';
+    case LedgerRequestType.CORRECTION:
+      return 'correction';
     default:
       throw new AppError(ErrorCode.INVALID_STATE, 'Unsupported Loan change request type');
   }
@@ -235,6 +246,17 @@ function buildFormalEvent(params: {
         ),
       };
     }
+    case LedgerRequestType.CORRECTION:
+      return buildCorrectionFormalEvent({
+        request: params.request as LedgerRequest & {
+          loanId: string;
+          payload: CorrectionPayload;
+        },
+        actorUserId: params.actorUserId,
+        sequence: params.sequence,
+        now: params.now,
+        currentEvents: params.currentEvents,
+      });
     default:
       throw new AppError(ErrorCode.INVALID_STATE, 'Unsupported Loan change request type');
   }
@@ -261,7 +283,8 @@ export async function createRepaymentRequest(
 
 /**
  * Confirm an implemented known-counterparty Loan change in one transaction.
- * Repayment additionally rebuilds principal from the same transaction snapshot.
+ * Balance-sensitive mutations rebuild the complete formal history from this
+ * same transaction snapshot before append.
  */
 export async function acceptRequest(
   ctx: ActionContext,
@@ -310,10 +333,12 @@ export async function acceptRequest(
       );
     }
 
-    const currentEvents =
-      request.type === LedgerRequestType.PRINCIPAL_REPAY
-        ? await readAllTransactionEvents(tx, loan._id)
-        : [];
+    const needsFullHistory =
+      request.type === LedgerRequestType.PRINCIPAL_REPAY ||
+      request.type === LedgerRequestType.CORRECTION;
+    const currentEvents = needsFullHistory
+      ? await readAllTransactionEvents(tx, loan._id)
+      : [];
     const [sequence] = await tx.allocateEventSequences(loan._id, 1);
     if (sequence == null) {
       throw new AppError(ErrorCode.INTERNAL, 'No event sequence allocated');
