@@ -92,6 +92,11 @@ export interface LedgerRepo {
     userId: UserId;
     page: PageInput;
   }): Promise<Page<LedgerRequest>>;
+  /** PENDING requests proposed by this user, for status display/cancellation. */
+  listProposedPendingRequestsForUser(params: {
+    userId: UserId;
+    page: PageInput;
+  }): Promise<Page<LedgerRequest>>;
 
   listLoanEvents(params: {
     loanId: string;
