@@ -75,6 +75,24 @@ describe('CloudBaseRepo adapter contract', () => {
     expect(page.nextCursor).not.toBeNull();
   });
 
+  it('supports the same bounded event pagination inside a transaction snapshot', async () => {
+    const fixture = fakeDb(Array.from({ length: 100 }, (_, index) => event(index + 1)));
+    const repo = new CloudBaseRepo(fixture.db);
+
+    const page = await repo.runTransaction((tx) =>
+      tx.listLoanEvents({
+        loanId: 'loan-1',
+        page: { limit: 100 },
+      }),
+    );
+
+    expect(fixture.requestedLimit()).toBe(100);
+    expect(page.items).toHaveLength(100);
+    expect(page.items[0]?.sequence).toBe(1);
+    expect(page.items[99]?.sequence).toBe(100);
+    expect(page.nextCursor).not.toBeNull();
+  });
+
   it('returns the node-sdk 3.x runTransaction callback value directly', async () => {
     const fixture = fakeDb([]);
     const repo = new CloudBaseRepo(fixture.db);

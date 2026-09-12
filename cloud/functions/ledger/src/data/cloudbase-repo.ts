@@ -33,6 +33,7 @@ import type {
 
 type Db = CallContext['db'];
 type DbTransaction = Parameters<Parameters<Db['runTransaction']>[0]>[0];
+type DbCommand = Db['command'];
 
 type LoanRecord = Loan & {
   /** Infrastructure-only event sequence counter; never an accounting balance. */
@@ -79,7 +80,6 @@ function stripLoanRecord(record: LoanRecord): Loan {
  * node-sdk's database get() caps one page at 100 records. To avoid limit+1
  * overflowing that cap, a full page advertises a next cursor. If the full page
  * happened to be the final exact multiple, the next read returns an empty page.
- * That costs one bounded query but never truncates history.
  */
 function pageFromCreatedAtRows<T extends { createdAt: number; _id: string }>(
   rows: T[],
@@ -92,6 +92,20 @@ function pageFromCreatedAtRows<T extends { createdAt: number; _id: string }>(
     nextCursor:
       items.length === limit && last
         ? encodeCreatedAtCursor({ createdAt: last.createdAt, _id: last._id })
+        : null,
+  };
+}
+
+function eventPage(
+  items: LoanEvent[],
+  limit: number,
+): Page<LoanEvent> {
+  const last = items[items.length - 1];
+  return {
+    items,
+    nextCursor:
+      items.length === limit && last
+        ? encodeSequenceCursor(last.sequence)
         : null,
   };
 }
@@ -131,8 +145,10 @@ export class CloudBaseRepo implements LedgerRepo {
   ): Promise<Page<Loan>> {
     validatePageInput(params.page);
     const field = params.direction === 'LENDER' ? 'lenderUserId' : 'borrowerUserId';
-    const base: Record<string, unknown> = { [field]: params.userId };
-    if (params.status) base.status = params.status;
+    const base: Record<string, unknown> = {
+      [field]: params.userId,
+      status: params.status,
+    };
 
     const _ = this.db.command;
     let where: object = base;
@@ -248,15 +264,7 @@ export class CloudBaseRepo implements LedgerRepo {
       .orderBy('sequence', 'asc')
       .limit(params.page.limit)
       .get();
-    const items = extractRows<LoanEvent>(response);
-    const last = items[items.length - 1];
-    return {
-      items,
-      nextCursor:
-        items.length === params.page.limit && last
-          ? encodeSequenceCursor(last.sequence)
-          : null,
-    };
+    return eventPage(extractRows<LoanEvent>(response), params.page.limit);
   }
 
   async createInvite(invite: NewInviteToken): Promise<InviteToken> {
@@ -277,9 +285,8 @@ export class CloudBaseRepo implements LedgerRepo {
   async runTransaction<T>(
     work: (tx: LedgerTransaction) => Promise<T>,
   ): Promise<T> {
-    // @cloudbase/node-sdk 3.x returns the callback's value directly.
     return this.db.runTransaction(async (transaction) =>
-      work(new CloudBaseTransaction(transaction)),
+      work(new CloudBaseTransaction(transaction, this.db.command)),
     );
   }
 }
@@ -287,7 +294,10 @@ export class CloudBaseRepo implements LedgerRepo {
 class CloudBaseTransaction implements LedgerTransaction {
   private readonly sequenceCache = new Map<string, number>();
 
-  constructor(private readonly transaction: DbTransaction) {}
+  constructor(
+    private readonly transaction: DbTransaction,
+    private readonly command: DbCommand,
+  ) {}
 
   private async first<T>(collection: string, where: object): Promise<T | null> {
     const response = await this.transaction
@@ -324,6 +334,25 @@ class CloudBaseTransaction implements LedgerTransaction {
       nextEventSequence: 1,
     });
     return { ...loan, _id: extractAddedId(response) };
+  }
+
+  async listLoanEvents(
+    params: Parameters<LedgerTransaction['listLoanEvents']>[0],
+  ): Promise<Page<LoanEvent>> {
+    validatePageInput(params.page);
+    const afterSequence = params.page.cursor
+      ? decodeSequenceCursor(params.page.cursor)
+      : 0;
+    const response = await this.transaction
+      .collection(Collections.LOAN_EVENTS)
+      .where({
+        loanId: params.loanId,
+        sequence: this.command.gt(afterSequence),
+      })
+      .orderBy('sequence', 'asc')
+      .limit(params.page.limit)
+      .get();
+    return eventPage(extractRows<LoanEvent>(response), params.page.limit);
   }
 
   async allocateEventSequences(loanId: string, count: number): Promise<number[]> {

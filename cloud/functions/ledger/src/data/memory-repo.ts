@@ -27,6 +27,7 @@ import type {
   NewLoanEvent,
   NewUser,
   Page,
+  PageInput,
 } from './repo.js';
 
 interface MemoryState {
@@ -58,7 +59,9 @@ function cloneValue<T>(value: T): T {
 }
 
 function cloneMap<T>(source: Map<string, T>): Map<string, T> {
-  return new Map([...source.entries()].map(([key, value]) => [key, cloneValue(value)]));
+  return new Map(
+    [...source.entries()].map(([key, value]) => [key, cloneValue(value)]),
+  );
 }
 
 function cloneState(source: MemoryState): MemoryState {
@@ -80,20 +83,16 @@ function nextId(state: MemoryState, prefix: string): string {
   return `${prefix}-${next}`;
 }
 
-function createdAtDescThenIdDesc<T extends { createdAt: number; _id: string }>(
-  a: T,
-  b: T,
-): number {
-  if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt;
-  return b._id.localeCompare(a._id);
-}
-
 function pageCreatedAt<T extends { createdAt: number; _id: string }>(
   rows: T[],
-  page: { limit: number; cursor?: string | null },
+  page: PageInput,
 ): Page<T> {
   validatePageInput(page);
-  let filtered = [...rows].sort(createdAtDescThenIdDesc);
+  let filtered = [...rows].sort((a, b) => {
+    if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt;
+    return b._id.localeCompare(a._id);
+  });
+
   if (page.cursor) {
     const cursor = decodeCreatedAtCursor(page.cursor);
     filtered = filtered.filter(
@@ -102,6 +101,7 @@ function pageCreatedAt<T extends { createdAt: number; _id: string }>(
         (row.createdAt === cursor.createdAt && row._id < cursor._id),
     );
   }
+
   const hasMore = filtered.length > page.limit;
   const items = filtered.slice(0, page.limit).map(cloneValue);
   const last = items[items.length - 1];
@@ -114,25 +114,51 @@ function pageCreatedAt<T extends { createdAt: number; _id: string }>(
   };
 }
 
+function pageLoanEvents(
+  state: MemoryState,
+  params: { loanId: string; page: PageInput },
+): Page<LoanEvent> {
+  validatePageInput(params.page);
+  const afterSequence = params.page.cursor
+    ? decodeSequenceCursor(params.page.cursor)
+    : 0;
+  const rows = [...state.events.values()]
+    .filter(
+      (event) =>
+        event.loanId === params.loanId && event.sequence > afterSequence,
+    )
+    .sort((a, b) => a.sequence - b.sequence);
+  const hasMore = rows.length > params.page.limit;
+  const items = rows.slice(0, params.page.limit).map(cloneValue);
+  const last = items[items.length - 1];
+  return {
+    items,
+    nextCursor:
+      hasMore && last ? encodeSequenceCursor(last.sequence) : null,
+  };
+}
+
 export class MemoryRepo implements LedgerRepo {
   private state: MemoryState = emptyState();
   private transactionTail: Promise<void> = Promise.resolve();
 
   async getUserByOpenid(openid: string): Promise<User | null> {
-    const found = [...this.state.users.values()].find((user) => user.openid === openid);
+    const found = [...this.state.users.values()].find(
+      (user) => user.openid === openid,
+    );
     return found ? cloneValue(found) : null;
   }
 
   async createUserIfOpenidFree(user: NewUser): Promise<CreateResult<User>> {
-    // Deliberately avoid an await between uniqueness check and insert. In-memory
-    // tests should model a unique index rather than allowing two same-turn calls
-    // to both observe absence and create duplicate OPENIDs.
     const existing = [...this.state.users.values()].find(
       (item) => item.openid === user.openid,
     );
     if (existing) return { item: cloneValue(existing), created: false };
 
-    const created: User = { ...cloneValue(user), _id: nextId(this.state, 'user') };
+    const created: User = {
+      ...cloneValue(user),
+      _id: nextId(this.state, 'user'),
+    };
     this.state.users.set(created._id, created);
     return { item: cloneValue(created), created: true };
   }
@@ -142,12 +168,18 @@ export class MemoryRepo implements LedgerRepo {
     return loan ? cloneValue(loan) : null;
   }
 
-  async listLoansForUser(params: Parameters<LedgerRepo['listLoansForUser']>[0]): Promise<Page<Loan>> {
-    const field = params.direction === 'LENDER' ? 'lenderUserId' : 'borrowerUserId';
-    const rows = [...this.state.loans.values()].filter(
-      (loan) => loan[field] === params.userId && (!params.status || loan.status === params.status),
+  async listLoansForUser(
+    params: Parameters<LedgerRepo['listLoansForUser']>[0],
+  ): Promise<Page<Loan>> {
+    const field =
+      params.direction === 'LENDER' ? 'lenderUserId' : 'borrowerUserId';
+    return pageCreatedAt(
+      [...this.state.loans.values()].filter(
+        (loan) =>
+          loan[field] === params.userId && loan.status === params.status,
+      ),
+      params.page,
     );
-    return pageCreatedAt(rows, params.page);
   }
 
   async getRequest(requestId: string): Promise<LedgerRequest | null> {
@@ -155,7 +187,9 @@ export class MemoryRepo implements LedgerRepo {
     return request ? cloneValue(request) : null;
   }
 
-  async getRequestByIdempotencyKey(idempotencyKey: string): Promise<LedgerRequest | null> {
+  async getRequestByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<LedgerRequest | null> {
     const request = [...this.state.requests.values()].find(
       (item) => item.idempotencyKey === idempotencyKey,
     );
@@ -165,7 +199,6 @@ export class MemoryRepo implements LedgerRepo {
   async createRequestIdempotent(
     request: NewLedgerRequest,
   ): Promise<CreateResult<LedgerRequest>> {
-    // Same uniqueness rule as the real ledger_requests.idempotencyKey index.
     const existing = [...this.state.requests.values()].find(
       (item) => item.idempotencyKey === request.idempotencyKey,
     );
@@ -188,41 +221,30 @@ export class MemoryRepo implements LedgerRepo {
   async listActionableRequestsForUser(
     params: Parameters<LedgerRepo['listActionableRequestsForUser']>[0],
   ): Promise<Page<LedgerRequest>> {
-    const rows = [...this.state.requests.values()].filter(
-      (request) =>
-        (request.status === 'PENDING' && request.counterpartyUserId === params.userId) ||
-        (request.status === 'PENDING_INITIATOR_VERIFY' &&
-          request.proposerUserId === params.userId),
+    return pageCreatedAt(
+      [...this.state.requests.values()].filter(
+        (request) =>
+          (request.status === 'PENDING' &&
+            request.counterpartyUserId === params.userId) ||
+          (request.status === 'PENDING_INITIATOR_VERIFY' &&
+            request.proposerUserId === params.userId),
+      ),
+      params.page,
     );
-    return pageCreatedAt(rows, params.page);
   }
 
   async listLoanEvents(
     params: Parameters<LedgerRepo['listLoanEvents']>[0],
   ): Promise<Page<LoanEvent>> {
-    validatePageInput(params.page);
-    const afterSequence = params.page.cursor
-      ? decodeSequenceCursor(params.page.cursor)
-      : 0;
-    const rows = [...this.state.events.values()]
-      .filter(
-        (event) => event.loanId === params.loanId && event.sequence > afterSequence,
-      )
-      .sort((a, b) => a.sequence - b.sequence);
-    const hasMore = rows.length > params.page.limit;
-    const items = rows.slice(0, params.page.limit).map(cloneValue);
-    const last = items[items.length - 1];
-    return {
-      items,
-      nextCursor: hasMore && last ? encodeSequenceCursor(last.sequence) : null,
-    };
+    return pageLoanEvents(this.state, params);
   }
 
   async createInvite(invite: NewInviteToken): Promise<InviteToken> {
-    const duplicate = [...this.state.invites.values()].some(
-      (item) => item.tokenHash === invite.tokenHash,
-    );
-    if (duplicate) {
+    if (
+      [...this.state.invites.values()].some(
+        (item) => item.tokenHash === invite.tokenHash,
+      )
+    ) {
       throw new AppError(ErrorCode.CONFLICT, 'Invite token hash already exists');
     }
     const created: InviteToken = {
@@ -241,11 +263,16 @@ export class MemoryRepo implements LedgerRepo {
   }
 
   async appendAudit(entry: NewAuditLog): Promise<void> {
-    const audit: AuditLog = { ...cloneValue(entry), _id: nextId(this.state, 'audit') };
+    const audit: AuditLog = {
+      ...cloneValue(entry),
+      _id: nextId(this.state, 'audit'),
+    };
     this.state.audits.set(audit._id, audit);
   }
 
-  async runTransaction<T>(work: (tx: LedgerTransaction) => Promise<T>): Promise<T> {
+  async runTransaction<T>(
+    work: (tx: LedgerTransaction) => Promise<T>,
+  ): Promise<T> {
     let release!: () => void;
     const previous = this.transactionTail;
     this.transactionTail = new Promise<void>((resolve) => {
@@ -285,21 +312,38 @@ class MemoryTransaction implements LedgerTransaction {
   }
 
   async createLoan(loan: NewLoan): Promise<Loan> {
-    const duplicate = [...this.state.loans.values()].some(
-      (item) => item.createdFromRequestId === loan.createdFromRequestId,
-    );
-    if (duplicate) {
+    if (
+      [...this.state.loans.values()].some(
+        (item) => item.createdFromRequestId === loan.createdFromRequestId,
+      )
+    ) {
       throw new AppError(ErrorCode.CONFLICT, 'Loan already exists for request');
     }
-    const created: Loan = { ...cloneValue(loan), _id: nextId(this.state, 'loan') };
+    const created: Loan = {
+      ...cloneValue(loan),
+      _id: nextId(this.state, 'loan'),
+    };
     this.state.loans.set(created._id, created);
     this.state.nextEventSequence.set(created._id, 1);
     return cloneValue(created);
   }
 
-  async allocateEventSequences(loanId: string, count: number): Promise<number[]> {
+  async listLoanEvents(params: {
+    loanId: string;
+    page: PageInput;
+  }): Promise<Page<LoanEvent>> {
+    return pageLoanEvents(this.state, params);
+  }
+
+  async allocateEventSequences(
+    loanId: string,
+    count: number,
+  ): Promise<number[]> {
     if (!Number.isSafeInteger(count) || count < 1) {
-      throw new AppError(ErrorCode.VALIDATION_ERROR, 'Sequence allocation count must be positive');
+      throw new AppError(
+        ErrorCode.VALIDATION_ERROR,
+        'Sequence allocation count must be positive',
+      );
     }
     if (!this.state.loans.has(loanId)) {
       throw new AppError(ErrorCode.NOT_FOUND, 'Loan not found');
@@ -309,7 +353,9 @@ class MemoryTransaction implements LedgerTransaction {
     return Array.from({ length: count }, (_, index) => start + index);
   }
 
-  async appendEventIdempotent(event: NewLoanEvent): Promise<CreateResult<LoanEvent>> {
+  async appendEventIdempotent(
+    event: NewLoanEvent,
+  ): Promise<CreateResult<LoanEvent>> {
     const existing = [...this.state.events.values()].find(
       (item) => item.idempotencyKey === event.idempotencyKey,
     );
@@ -318,11 +364,16 @@ class MemoryTransaction implements LedgerTransaction {
       return { item: cloneValue(existing), created: false };
     }
 
-    const sequenceCollision = [...this.state.events.values()].some(
-      (item) => item.loanId === event.loanId && item.sequence === event.sequence,
-    );
-    if (sequenceCollision) {
-      throw new AppError(ErrorCode.CONFLICT, 'Loan event sequence already exists');
+    if (
+      [...this.state.events.values()].some(
+        (item) =>
+          item.loanId === event.loanId && item.sequence === event.sequence,
+      )
+    ) {
+      throw new AppError(
+        ErrorCode.CONFLICT,
+        'Loan event sequence already exists',
+      );
     }
 
     const created: LoanEvent = {
@@ -342,10 +393,12 @@ class MemoryTransaction implements LedgerTransaction {
     if (!this.state.invites.has(invite._id)) {
       throw new AppError(ErrorCode.NOT_FOUND, 'InviteToken not found');
     }
-    const duplicateHash = [...this.state.invites.values()].some(
-      (item) => item._id !== invite._id && item.tokenHash === invite.tokenHash,
-    );
-    if (duplicateHash) {
+    if (
+      [...this.state.invites.values()].some(
+        (item) =>
+          item._id !== invite._id && item.tokenHash === invite.tokenHash,
+      )
+    ) {
       throw new AppError(ErrorCode.CONFLICT, 'Invite token hash already exists');
     }
     this.state.invites.set(invite._id, cloneValue(invite));

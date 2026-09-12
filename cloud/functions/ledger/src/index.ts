@@ -17,6 +17,12 @@ import {
   listLoans,
   listPendingRequests,
 } from './actions/readActions.js';
+import {
+  acceptRequest,
+  cancelRequest,
+  createRepaymentRequest,
+  rejectRequest,
+} from './actions/repaymentActions.js';
 
 type Event = {
   action?: string;
@@ -63,6 +69,14 @@ export async function main(
         return ok(await listPendingRequests(ctx, event.payload));
       case 'getHomeSummary':
         return ok(await getHomeSummary(ctx, event.payload));
+      case 'createRepaymentRequest':
+        return ok(await createRepaymentRequest(ctx, event.payload));
+      case 'acceptRequest':
+        return ok(await acceptRequest(ctx, event.payload));
+      case 'rejectRequest':
+        return ok(await rejectRequest(ctx, event.payload));
+      case 'cancelRequest':
+        return ok(await cancelRequest(ctx, event.payload));
       default:
         throw new AppError(
           ErrorCode.INVALID_STATE,
