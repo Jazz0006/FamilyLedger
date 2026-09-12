@@ -4,6 +4,7 @@ import { AppError, ErrorCode, type ApiResponse } from './errors.js';
 import { makeActionContext } from './actions/action-context.js';
 import { ensureUser } from './actions/ensureUser.js';
 import { createLoanRequest } from './actions/createLoanRequest.js';
+import { createKnownLoanRequest } from './actions/createKnownLoanRequest.js';
 import {
   acceptInviteRequest,
   createLoanInvite,
@@ -17,6 +18,7 @@ import {
   listLoans,
   listPendingRequests,
 } from './actions/readActions.js';
+import { listKnownCounterparties } from './actions/knownCounterparties.js';
 import {
   acceptRequest,
   cancelRequest,
@@ -35,11 +37,6 @@ type Event = {
   payload?: unknown;
 };
 
-/**
- * v2 ledger router. Only actions whose v2 authority/transaction semantics have
- * been implemented are exposed here; unavailable legacy/future actions fail
- * closed instead of falling back to v1 behavior.
- */
 export async function main(
   event: Event,
   fnContext: unknown,
@@ -57,6 +54,8 @@ export async function main(
         return ok(await ensureUser(ctx, event.payload));
       case 'createLoanRequest':
         return ok(await createLoanRequest(ctx, event.payload));
+      case 'createKnownLoanRequest':
+        return ok(await createKnownLoanRequest(ctx, event.payload));
       case 'createLoanInvite':
         return ok(await createLoanInvite(ctx, event.payload));
       case 'previewInvite':
@@ -73,6 +72,8 @@ export async function main(
         return ok(await listLoanEvents(ctx, event.payload));
       case 'listPendingRequests':
         return ok(await listPendingRequests(ctx, event.payload));
+      case 'listKnownCounterparties':
+        return ok(await listKnownCounterparties(ctx, event.payload));
       case 'getHomeSummary':
         return ok(await getHomeSummary(ctx, event.payload));
       case 'createRepaymentRequest':
