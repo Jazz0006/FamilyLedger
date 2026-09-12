@@ -10,6 +10,13 @@ import {
   previewInvite,
 } from './actions/loanInvites.js';
 import { verifyFirstCounterparty } from './actions/verifyFirstCounterparty.js';
+import {
+  getHomeSummary,
+  getLoan,
+  listLoanEvents,
+  listLoans,
+  listPendingRequests,
+} from './actions/readActions.js';
 
 type Event = {
   action?: string;
@@ -46,6 +53,16 @@ export async function main(
         return ok(await acceptInviteRequest(ctx, event.payload));
       case 'verifyFirstCounterparty':
         return ok(await verifyFirstCounterparty(ctx, event.payload));
+      case 'getLoan':
+        return ok(await getLoan(ctx, event.payload));
+      case 'listLoans':
+        return ok(await listLoans(ctx, event.payload));
+      case 'listLoanEvents':
+        return ok(await listLoanEvents(ctx, event.payload));
+      case 'listPendingRequests':
+        return ok(await listPendingRequests(ctx, event.payload));
+      case 'getHomeSummary':
+        return ok(await getHomeSummary(ctx, event.payload));
       default:
         throw new AppError(
           ErrorCode.INVALID_STATE,
