@@ -1,9 +1,7 @@
 import type {
   AuditLog,
-  InviteStatus,
   InviteToken,
   LedgerRequest,
-  LedgerRequestStatus,
   Loan,
   LoanEvent,
   LoanStatus,
@@ -71,7 +69,7 @@ export interface LedgerRepo {
   listLoansForUser(params: {
     userId: UserId;
     direction: LoanDirection;
-    status?: LoanStatus;
+    status: LoanStatus;
     page: PageInput;
   }): Promise<Page<Loan>>;
 
@@ -97,20 +95,3 @@ export interface LedgerRepo {
 
   runTransaction<T>(work: (tx: LedgerTransaction) => Promise<T>): Promise<T>;
 }
-
-/** Narrow patch type used by repositories when filtering actionable requests. */
-export const ACTIONABLE_REQUEST_STATUSES: readonly LedgerRequestStatus[] = [
-  'PENDING',
-  'PENDING_INITIATOR_VERIFY',
-];
-
-/** Statuses that may appear on visible active/closed Loan listings. */
-export const LISTABLE_LOAN_STATUSES: readonly LoanStatus[] = ['ACTIVE', 'CLOSED'];
-
-/** Invite statuses persisted by the v2 repository. */
-export const PERSISTED_INVITE_STATUSES: readonly InviteStatus[] = [
-  'ACTIVE',
-  'CLAIMED',
-  'REVOKED',
-  'EXPIRED',
-];
