@@ -1,6 +1,6 @@
 {
   "name": "family-ledger",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "private": true,
   "description": "来往账 — mutually confirmed bilateral loan ledger for WeChat Mini Program",
   "type": "module",
