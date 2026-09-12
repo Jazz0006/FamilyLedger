@@ -1,0 +1,353 @@
+import type {
+  AuditLog,
+  InviteToken,
+  LedgerRequest,
+  Loan,
+  LoanEvent,
+  User,
+} from '@family-ledger/shared';
+import { AppError, ErrorCode } from '../errors.js';
+import { assertMatchingRequestFingerprint } from '../domain/request-fingerprint.js';
+import {
+  decodeCreatedAtCursor,
+  decodeSequenceCursor,
+  encodeCreatedAtCursor,
+  encodeSequenceCursor,
+  validatePageInput,
+} from './cursor.js';
+import { assertSameEventMutation } from './event-idempotency.js';
+import type {
+  CreateResult,
+  LedgerRepo,
+  LedgerTransaction,
+  NewAuditLog,
+  NewInviteToken,
+  NewLedgerRequest,
+  NewLoan,
+  NewLoanEvent,
+  NewUser,
+  Page,
+} from './repo.js';
+
+interface MemoryState {
+  users: Map<string, User>;
+  loans: Map<string, Loan>;
+  requests: Map<string, LedgerRequest>;
+  events: Map<string, LoanEvent>;
+  invites: Map<string, InviteToken>;
+  audits: Map<string, AuditLog>;
+  nextEventSequence: Map<string, number>;
+  counters: Record<string, number>;
+}
+
+function emptyState(): MemoryState {
+  return {
+    users: new Map(),
+    loans: new Map(),
+    requests: new Map(),
+    events: new Map(),
+    invites: new Map(),
+    audits: new Map(),
+    nextEventSequence: new Map(),
+    counters: {},
+  };
+}
+
+function cloneValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function cloneMap<T>(source: Map<string, T>): Map<string, T> {
+  return new Map([...source.entries()].map(([key, value]) => [key, cloneValue(value)]));
+}
+
+function cloneState(source: MemoryState): MemoryState {
+  return {
+    users: cloneMap(source.users),
+    loans: cloneMap(source.loans),
+    requests: cloneMap(source.requests),
+    events: cloneMap(source.events),
+    invites: cloneMap(source.invites),
+    audits: cloneMap(source.audits),
+    nextEventSequence: new Map(source.nextEventSequence),
+    counters: { ...source.counters },
+  };
+}
+
+function nextId(state: MemoryState, prefix: string): string {
+  const next = (state.counters[prefix] ?? 0) + 1;
+  state.counters[prefix] = next;
+  return `${prefix}-${next}`;
+}
+
+function createdAtDescThenIdDesc<T extends { createdAt: number; _id: string }>(
+  a: T,
+  b: T,
+): number {
+  if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt;
+  return b._id.localeCompare(a._id);
+}
+
+function pageCreatedAt<T extends { createdAt: number; _id: string }>(
+  rows: T[],
+  page: { limit: number; cursor?: string | null },
+): Page<T> {
+  validatePageInput(page);
+  let filtered = [...rows].sort(createdAtDescThenIdDesc);
+  if (page.cursor) {
+    const cursor = decodeCreatedAtCursor(page.cursor);
+    filtered = filtered.filter(
+      (row) =>
+        row.createdAt < cursor.createdAt ||
+        (row.createdAt === cursor.createdAt && row._id < cursor._id),
+    );
+  }
+  const hasMore = filtered.length > page.limit;
+  const items = filtered.slice(0, page.limit).map(cloneValue);
+  const last = items[items.length - 1];
+  return {
+    items,
+    nextCursor:
+      hasMore && last
+        ? encodeCreatedAtCursor({ createdAt: last.createdAt, _id: last._id })
+        : null,
+  };
+}
+
+export class MemoryRepo implements LedgerRepo {
+  private state: MemoryState = emptyState();
+  private transactionTail: Promise<void> = Promise.resolve();
+
+  async getUserByOpenid(openid: string): Promise<User | null> {
+    const found = [...this.state.users.values()].find((user) => user.openid === openid);
+    return found ? cloneValue(found) : null;
+  }
+
+  async createUserIfOpenidFree(user: NewUser): Promise<CreateResult<User>> {
+    // Deliberately avoid an await between uniqueness check and insert. In-memory
+    // tests should model a unique index rather than allowing two same-turn calls
+    // to both observe absence and create duplicate OPENIDs.
+    const existing = [...this.state.users.values()].find(
+      (item) => item.openid === user.openid,
+    );
+    if (existing) return { item: cloneValue(existing), created: false };
+
+    const created: User = { ...cloneValue(user), _id: nextId(this.state, 'user') };
+    this.state.users.set(created._id, created);
+    return { item: cloneValue(created), created: true };
+  }
+
+  async getLoan(loanId: string): Promise<Loan | null> {
+    const loan = this.state.loans.get(loanId);
+    return loan ? cloneValue(loan) : null;
+  }
+
+  async listLoansForUser(params: Parameters<LedgerRepo['listLoansForUser']>[0]): Promise<Page<Loan>> {
+    const field = params.direction === 'LENDER' ? 'lenderUserId' : 'borrowerUserId';
+    const rows = [...this.state.loans.values()].filter(
+      (loan) => loan[field] === params.userId && (!params.status || loan.status === params.status),
+    );
+    return pageCreatedAt(rows, params.page);
+  }
+
+  async getRequest(requestId: string): Promise<LedgerRequest | null> {
+    const request = this.state.requests.get(requestId);
+    return request ? cloneValue(request) : null;
+  }
+
+  async getRequestByIdempotencyKey(idempotencyKey: string): Promise<LedgerRequest | null> {
+    const request = [...this.state.requests.values()].find(
+      (item) => item.idempotencyKey === idempotencyKey,
+    );
+    return request ? cloneValue(request) : null;
+  }
+
+  async createRequestIdempotent(
+    request: NewLedgerRequest,
+  ): Promise<CreateResult<LedgerRequest>> {
+    // Same uniqueness rule as the real ledger_requests.idempotencyKey index.
+    const existing = [...this.state.requests.values()].find(
+      (item) => item.idempotencyKey === request.idempotencyKey,
+    );
+    if (existing) {
+      assertMatchingRequestFingerprint({
+        storedFingerprint: existing.requestFingerprint,
+        incomingFingerprint: request.requestFingerprint,
+      });
+      return { item: cloneValue(existing), created: false };
+    }
+
+    const created: LedgerRequest = {
+      ...cloneValue(request),
+      _id: nextId(this.state, 'request'),
+    };
+    this.state.requests.set(created._id, created);
+    return { item: cloneValue(created), created: true };
+  }
+
+  async listActionableRequestsForUser(
+    params: Parameters<LedgerRepo['listActionableRequestsForUser']>[0],
+  ): Promise<Page<LedgerRequest>> {
+    const rows = [...this.state.requests.values()].filter(
+      (request) =>
+        (request.status === 'PENDING' && request.counterpartyUserId === params.userId) ||
+        (request.status === 'PENDING_INITIATOR_VERIFY' &&
+          request.proposerUserId === params.userId),
+    );
+    return pageCreatedAt(rows, params.page);
+  }
+
+  async listLoanEvents(
+    params: Parameters<LedgerRepo['listLoanEvents']>[0],
+  ): Promise<Page<LoanEvent>> {
+    validatePageInput(params.page);
+    const afterSequence = params.page.cursor
+      ? decodeSequenceCursor(params.page.cursor)
+      : 0;
+    const rows = [...this.state.events.values()]
+      .filter(
+        (event) => event.loanId === params.loanId && event.sequence > afterSequence,
+      )
+      .sort((a, b) => a.sequence - b.sequence);
+    const hasMore = rows.length > params.page.limit;
+    const items = rows.slice(0, params.page.limit).map(cloneValue);
+    const last = items[items.length - 1];
+    return {
+      items,
+      nextCursor: hasMore && last ? encodeSequenceCursor(last.sequence) : null,
+    };
+  }
+
+  async createInvite(invite: NewInviteToken): Promise<InviteToken> {
+    const duplicate = [...this.state.invites.values()].some(
+      (item) => item.tokenHash === invite.tokenHash,
+    );
+    if (duplicate) {
+      throw new AppError(ErrorCode.CONFLICT, 'Invite token hash already exists');
+    }
+    const created: InviteToken = {
+      ...cloneValue(invite),
+      _id: nextId(this.state, 'invite'),
+    };
+    this.state.invites.set(created._id, created);
+    return cloneValue(created);
+  }
+
+  async getInviteByHash(tokenHash: string): Promise<InviteToken | null> {
+    const invite = [...this.state.invites.values()].find(
+      (item) => item.tokenHash === tokenHash,
+    );
+    return invite ? cloneValue(invite) : null;
+  }
+
+  async appendAudit(entry: NewAuditLog): Promise<void> {
+    const audit: AuditLog = { ...cloneValue(entry), _id: nextId(this.state, 'audit') };
+    this.state.audits.set(audit._id, audit);
+  }
+
+  async runTransaction<T>(work: (tx: LedgerTransaction) => Promise<T>): Promise<T> {
+    let release!: () => void;
+    const previous = this.transactionTail;
+    this.transactionTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+
+    const working = cloneState(this.state);
+    try {
+      const result = await work(new MemoryTransaction(working));
+      this.state = working;
+      return result;
+    } finally {
+      release();
+    }
+  }
+}
+
+class MemoryTransaction implements LedgerTransaction {
+  constructor(private readonly state: MemoryState) {}
+
+  async getRequest(requestId: string): Promise<LedgerRequest | null> {
+    const request = this.state.requests.get(requestId);
+    return request ? cloneValue(request) : null;
+  }
+
+  async putRequest(request: LedgerRequest): Promise<void> {
+    if (!this.state.requests.has(request._id)) {
+      throw new AppError(ErrorCode.NOT_FOUND, 'LedgerRequest not found');
+    }
+    this.state.requests.set(request._id, cloneValue(request));
+  }
+
+  async getLoan(loanId: string): Promise<Loan | null> {
+    const loan = this.state.loans.get(loanId);
+    return loan ? cloneValue(loan) : null;
+  }
+
+  async createLoan(loan: NewLoan): Promise<Loan> {
+    const duplicate = [...this.state.loans.values()].some(
+      (item) => item.createdFromRequestId === loan.createdFromRequestId,
+    );
+    if (duplicate) {
+      throw new AppError(ErrorCode.CONFLICT, 'Loan already exists for request');
+    }
+    const created: Loan = { ...cloneValue(loan), _id: nextId(this.state, 'loan') };
+    this.state.loans.set(created._id, created);
+    this.state.nextEventSequence.set(created._id, 1);
+    return cloneValue(created);
+  }
+
+  async allocateEventSequences(loanId: string, count: number): Promise<number[]> {
+    if (!Number.isSafeInteger(count) || count < 1) {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, 'Sequence allocation count must be positive');
+    }
+    if (!this.state.loans.has(loanId)) {
+      throw new AppError(ErrorCode.NOT_FOUND, 'Loan not found');
+    }
+    const start = this.state.nextEventSequence.get(loanId) ?? 1;
+    this.state.nextEventSequence.set(loanId, start + count);
+    return Array.from({ length: count }, (_, index) => start + index);
+  }
+
+  async appendEventIdempotent(event: NewLoanEvent): Promise<CreateResult<LoanEvent>> {
+    const existing = [...this.state.events.values()].find(
+      (item) => item.idempotencyKey === event.idempotencyKey,
+    );
+    if (existing) {
+      assertSameEventMutation(existing, event);
+      return { item: cloneValue(existing), created: false };
+    }
+
+    const sequenceCollision = [...this.state.events.values()].some(
+      (item) => item.loanId === event.loanId && item.sequence === event.sequence,
+    );
+    if (sequenceCollision) {
+      throw new AppError(ErrorCode.CONFLICT, 'Loan event sequence already exists');
+    }
+
+    const created: LoanEvent = {
+      ...cloneValue(event),
+      _id: nextId(this.state, 'event'),
+    };
+    this.state.events.set(created._id, created);
+    return { item: cloneValue(created), created: true };
+  }
+
+  async getInvite(inviteId: string): Promise<InviteToken | null> {
+    const invite = this.state.invites.get(inviteId);
+    return invite ? cloneValue(invite) : null;
+  }
+
+  async putInvite(invite: InviteToken): Promise<void> {
+    if (!this.state.invites.has(invite._id)) {
+      throw new AppError(ErrorCode.NOT_FOUND, 'InviteToken not found');
+    }
+    const duplicateHash = [...this.state.invites.values()].some(
+      (item) => item._id !== invite._id && item.tokenHash === invite.tokenHash,
+    );
+    if (duplicateHash) {
+      throw new AppError(ErrorCode.CONFLICT, 'Invite token hash already exists');
+    }
+    this.state.invites.set(invite._id, cloneValue(invite));
+  }
+}
