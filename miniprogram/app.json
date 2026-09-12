@@ -1,17 +1,15 @@
 {
   "pages": [
     "pages/home/home",
+    "pages/create/create",
     "pages/detail/detail",
     "pages/confirm/confirm",
-    "pages/bind/bind",
-    "pages/admin-family/admin-family",
-    "pages/admin-account/admin-account",
-    "pages/admin-invites/admin-invites"
+    "pages/bind/bind"
   ],
   "window": {
     "navigationBarBackgroundColor": "#ffffff",
     "navigationBarTextStyle": "black",
-    "navigationBarTitleText": "家庭借款账本",
+    "navigationBarTitleText": "来往账",
     "backgroundColor": "#f5f5f7"
   },
   "style": "v2",
