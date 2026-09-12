@@ -6,7 +6,6 @@ import {
   LoanStatus,
   type CloseLoanPayload,
   type CorrectionPayload,
-  type CreateLoanPayload,
   type LedgerRequest,
   type Loan,
   type LoanEvent,
@@ -23,7 +22,6 @@ import {
 } from '../domain/permissions.js';
 import { assertLedgerRequestTransition } from '../domain/request-state.js';
 import { assertPrincipalTimelineNonNegative } from '../domain/principal-timeline.js';
-import { assertCreateLoanRequestStructure } from '../domain/validation.js';
 import { AppError, ErrorCode } from '../errors.js';
 import {
   eventIdempotencyKey,
@@ -55,10 +53,7 @@ import {
   buildCloseFormalEvent,
   closePayloadForStoredRequest,
 } from './closeLoanActions.js';
-import {
-  createLoanWithGenesis,
-  type BoundCreateLoanRequest,
-} from './apply-create-loan.js';
+import { assertKnownCreateLoanRequest } from './createKnownLoanRequest.js';
 
 const TX_EVENT_PAGE_SIZE = 100;
 
@@ -78,13 +73,6 @@ export interface AppliedLoanChangeResult {
   request: LedgerRequest;
   event: LoanEvent;
 }
-
-export interface AppliedCreateLoanResult {
-  request: LedgerRequest;
-  loan: Loan;
-}
-
-export type AppliedRequestResult = AppliedLoanChangeResult | AppliedCreateLoanResult;
 
 function validation(message: string): never {
   throw new AppError(ErrorCode.VALIDATION_ERROR, message);
@@ -120,44 +108,6 @@ function isSupportedKnownRequestType(type: string): boolean {
   );
 }
 
-function assertKnownCreateLoanShape(request: LedgerRequest): asserts request is
-  LedgerRequest & {
-    counterpartyUserId: string;
-    payload: CreateLoanPayload & {
-      borrowerUserId: string;
-      lenderUserId: string;
-      unknownPartyRole: null;
-    };
-  } {
-  if (request.type !== LedgerRequestType.CREATE_LOAN) {
-    throw new AppError(ErrorCode.INVALID_STATE, 'Request is not CREATE_LOAN');
-  }
-  if (request.requiresInitiatorVerify) {
-    throw new AppError(
-      ErrorCode.INVALID_STATE,
-      'First-contact CREATE_LOAN must use initiator verification',
-    );
-  }
-  if (request.status === LedgerRequestStatus.PENDING && request.loanId !== null) {
-    throw new AppError(ErrorCode.INVALID_STATE, 'Pending CREATE_LOAN already has a Loan');
-  }
-  if (request.status === LedgerRequestStatus.APPLIED && request.loanId == null) {
-    throw new AppError(ErrorCode.INVALID_STATE, 'Applied CREATE_LOAN has no Loan');
-  }
-  assertCreateLoanRequestStructure({ ...request, loanId: null });
-  const payload = request.payload as CreateLoanPayload;
-  if (
-    request.counterpartyUserId == null ||
-    payload.borrowerUserId == null ||
-    payload.lenderUserId == null ||
-    payload.unknownPartyRole !== null
-  ) {
-    throw new AppError(ErrorCode.INVALID_STATE, 'Known CREATE_LOAN parties are incomplete');
-  }
-  normalizeRateSnapshot(payload.rate);
-  assertIsoDate(payload.proposedEffectiveDate);
-}
-
 function assertSupportedKnownRequest(request: LedgerRequest): void {
   if (!isSupportedKnownRequestType(request.type)) {
     throw new AppError(
@@ -173,7 +123,7 @@ function assertSupportedKnownRequest(request: LedgerRequest): void {
   }
 
   if (request.type === LedgerRequestType.CREATE_LOAN) {
-    assertKnownCreateLoanShape(request);
+    assertKnownCreateLoanRequest(request);
     return;
   }
 
@@ -367,7 +317,7 @@ export async function createRepaymentRequest(
 export async function acceptRequest(
   ctx: ActionContext,
   input: unknown,
-): Promise<AppliedRequestResult> {
+): Promise<AppliedLoanChangeResult> {
   const actor = await requireCurrentUser(ctx);
   const { requestId } = normalizeRequestIdInput(input);
 
@@ -375,20 +325,16 @@ export async function acceptRequest(
     const request = await tx.getRequest(requestId);
     if (!request) throw new AppError(ErrorCode.NOT_FOUND, 'LedgerRequest not found');
     assertSupportedKnownRequest(request);
+    if (request.type === LedgerRequestType.CREATE_LOAN) {
+      throw new AppError(
+        ErrorCode.INVALID_STATE,
+        'Known CREATE_LOAN must be accepted through acceptKnownLoanRequest',
+      );
+    }
 
     if (request.status === LedgerRequestStatus.APPLIED) {
       if (actor._id !== request.counterpartyUserId) {
         throw new AppError(ErrorCode.FORBIDDEN, 'Only the counterparty may accept this request');
-      }
-      if (request.type === LedgerRequestType.CREATE_LOAN) {
-        if (request.loanId == null) {
-          throw new AppError(ErrorCode.INVALID_STATE, 'Applied CREATE_LOAN has no Loan');
-        }
-        const loan = await tx.getLoan(request.loanId);
-        if (!loan) {
-          throw new AppError(ErrorCode.INVALID_STATE, 'Applied CREATE_LOAN Loan is missing');
-        }
-        return { request, loan };
       }
       if (request.loanId == null) {
         throw new AppError(ErrorCode.INVALID_STATE, 'Applied Loan change has no Loan');
@@ -407,27 +353,6 @@ export async function acceptRequest(
     }
 
     assertCanRespondToKnownCounterpartyRequest(request, actor._id);
-
-    if (request.type === LedgerRequestType.CREATE_LOAN) {
-      assertKnownCreateLoanShape(request);
-      const loan = await createLoanWithGenesis({
-        tx,
-        request: request as BoundCreateLoanRequest,
-        confirmedByUserId: actor._id,
-        now: ctx.now,
-      });
-      assertLedgerRequestTransition(request, LedgerRequestStatus.APPLIED);
-      const applied: LedgerRequest = {
-        ...request,
-        loanId: loan._id,
-        status: LedgerRequestStatus.APPLIED,
-        updatedAt: ctx.now,
-        resolvedAt: ctx.now,
-      };
-      await tx.putRequest(applied);
-      return { request: applied, loan };
-    }
-
     if (request.loanId == null) {
       throw new AppError(ErrorCode.INVALID_STATE, 'Loan change request has no Loan');
     }
