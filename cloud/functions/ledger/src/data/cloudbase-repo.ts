@@ -114,6 +114,10 @@ export class CloudBaseRepo implements LedgerRepo {
     return this.first<User>(Collections.USERS, { openid });
   }
 
+  async getUserById(userId: string): Promise<User | null> {
+    return this.first<User>(Collections.USERS, { _id: userId });
+  }
+
   async createUserIfOpenidFree(user: NewUser): Promise<CreateResult<User>> {
     try {
       const response = await this.db.collection(Collections.USERS).add(user);
@@ -329,7 +333,6 @@ class CloudBaseTransaction implements LedgerTransaction {
   }
 
   async putLoan(loan: Loan): Promise<void> {
-    // Partial update preserves the infrastructure-only nextEventSequence field.
     await this.transaction
       .collection(Collections.LOANS)
       .doc(loan._id)
