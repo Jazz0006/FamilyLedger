@@ -238,6 +238,19 @@ export class MemoryRepo implements LedgerRepo {
     );
   }
 
+  async listProposedPendingRequestsForUser(
+    params: Parameters<LedgerRepo['listProposedPendingRequestsForUser']>[0],
+  ): Promise<Page<LedgerRequest>> {
+    return pageCreatedAt(
+      [...this.state.requests.values()].filter(
+        (request) =>
+          request.status === 'PENDING' &&
+          request.proposerUserId === params.userId,
+      ),
+      params.page,
+    );
+  }
+
   async listLoanEvents(
     params: Parameters<LedgerRepo['listLoanEvents']>[0],
   ): Promise<Page<LoanEvent>> {
