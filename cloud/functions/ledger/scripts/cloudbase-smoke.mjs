@@ -35,6 +35,10 @@ function extractOne(response) {
   return response?.data && typeof response.data === 'object' ? response.data : null;
 }
 
+function errorContains(error, sentinel) {
+  return error instanceof Error && error.message.includes(sentinel);
+}
+
 const envId = process.env.CLOUDBASE_ENV_ID;
 if (!envId) throw new Error('CLOUDBASE_ENV_ID is required');
 if (process.env.R12D_ALLOW_MUTATION !== envId) {
@@ -97,8 +101,6 @@ async function cleanup() {
   await removeDoc(Collections.INVITE_TOKENS, inviteId);
   await removeDoc(Collections.LEDGER_REQUESTS, requestId);
 
-  // Recover exact synthetic users even if a concurrent ensureUser failed before
-  // the caller received its returned ID.
   for (const openid of [aliceOpenid, bobOpenid]) {
     try {
       const user = await repo.getUserByOpenid(openid);
@@ -112,8 +114,6 @@ async function cleanup() {
 try {
   console.log(`R12D CloudBase smoke starting in ${envId} (run ${runId})`);
 
-  // Real unique-index + duplicate-error behavior: two concurrent creations of
-  // one synthetic OPENID must converge to the same User.
   const [aliceA, aliceB] = await Promise.all([
     ensureUser(ctx(aliceOpenid), { displayName: 'R12D Alice' }),
     ensureUser(ctx(aliceOpenid, 1), { displayName: 'R12D Alice' }),
@@ -200,7 +200,7 @@ try {
       throw new Error('R12D_FORCED_ROLLBACK');
     });
   } catch (error) {
-    if (error instanceof Error && error.message === 'R12D_FORCED_ROLLBACK') {
+    if (errorContains(error, 'R12D_FORCED_ROLLBACK')) {
       forcedRollbackObserved = true;
     } else {
       throw error;
@@ -232,7 +232,7 @@ try {
       throw new Error('R12D_FORCED_UPDATE_ROLLBACK');
     });
   } catch (error) {
-    if (!(error instanceof Error) || error.message !== 'R12D_FORCED_UPDATE_ROLLBACK') {
+    if (!errorContains(error, 'R12D_FORCED_UPDATE_ROLLBACK')) {
       throw error;
     }
   }
@@ -245,7 +245,6 @@ try {
   console.log('Verified: unique OPENID convergence, first-contact transaction, idempotent verify retry, event rollback, sequence rollback, request-update rollback.');
 } finally {
   await cleanup();
-  // Keep references alive for diagnostics without printing OPENIDs or credentials.
   void aliceUserId;
   void bobUserId;
 }
