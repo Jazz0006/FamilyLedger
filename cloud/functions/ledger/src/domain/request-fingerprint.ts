@@ -1,14 +1,22 @@
 import { createHash } from 'node:crypto';
-import type {
-  LedgerRequestPayload,
+import {
   LedgerRequestType,
-  LoanId,
-  UserId,
+  type CloseLoanPayload,
+  type CorrectionPayload,
+  type CreateLoanPayload,
+  type LedgerRequestPayload,
+  type LedgerRequestType as LedgerRequestTypeValue,
+  type LoanId,
+  type PrincipalAddPayload,
+  type PrincipalRepayPayload,
+  type RateChangePayload,
+  type RateSnapshot,
+  type UserId,
 } from '@family-ledger/shared';
 import { AppError, ErrorCode } from '../errors.js';
 
 export interface RequestFingerprintInput {
-  type: LedgerRequestType;
+  type: LedgerRequestTypeValue;
   loanId: LoanId | null;
   proposerUserId: UserId;
   counterpartyUserId: UserId | null;
@@ -61,6 +69,78 @@ function canonicalize(value: unknown): CanonicalJson {
   );
 }
 
+function semanticRate(rate: RateSnapshot): object {
+  return {
+    annualEffectiveRate: rate.annualEffectiveRate,
+    rateSource: rate.rateSource,
+    rateReferenceYear: rate.rateReferenceYear ?? null,
+    rateReferenceLabel: rate.rateReferenceLabel ?? null,
+  };
+}
+
+function semanticPayload(
+  type: LedgerRequestTypeValue,
+  payload: LedgerRequestPayload,
+): object {
+  switch (type) {
+    case LedgerRequestType.CREATE_LOAN: {
+      const value = payload as CreateLoanPayload;
+      return {
+        borrowerUserId: value.borrowerUserId,
+        lenderUserId: value.lenderUserId,
+        unknownPartyRole: value.unknownPartyRole,
+        initialPrincipalFen: value.initialPrincipalFen,
+        rate: semanticRate(value.rate),
+        proposedEffectiveDate: value.proposedEffectiveDate,
+        note: value.note ?? null,
+      };
+    }
+    case LedgerRequestType.PRINCIPAL_ADD: {
+      const value = payload as PrincipalAddPayload;
+      return {
+        amountFen: value.amountFen,
+        proposedEffectiveDate: value.proposedEffectiveDate,
+        note: value.note ?? null,
+      };
+    }
+    case LedgerRequestType.PRINCIPAL_REPAY: {
+      const value = payload as PrincipalRepayPayload;
+      return {
+        amountFen: value.amountFen,
+        proposedEffectiveDate: value.proposedEffectiveDate,
+        note: value.note ?? null,
+      };
+    }
+    case LedgerRequestType.RATE_CHANGE: {
+      const value = payload as RateChangePayload;
+      return {
+        rate: semanticRate(value.rate),
+        proposedEffectiveDate: value.proposedEffectiveDate,
+        note: value.note ?? null,
+      };
+    }
+    case LedgerRequestType.CORRECTION: {
+      const value = payload as CorrectionPayload;
+      return {
+        targetEventId: value.targetEventId,
+        principalDeltaFen: value.principalDeltaFen ?? null,
+        replacementRate: value.replacementRate
+          ? semanticRate(value.replacementRate)
+          : null,
+        proposedEffectiveDate: value.proposedEffectiveDate,
+        reason: value.reason ?? null,
+      };
+    }
+    case LedgerRequestType.CLOSE_LOAN: {
+      const value = payload as CloseLoanPayload;
+      return {
+        proposedEffectiveDate: value.proposedEffectiveDate,
+        note: value.note ?? null,
+      };
+    }
+  }
+}
+
 export function canonicalRequestSemanticJson(
   input: RequestFingerprintInput,
 ): string {
@@ -70,7 +150,7 @@ export function canonicalRequestSemanticJson(
     proposerUserId: input.proposerUserId,
     counterpartyUserId: input.counterpartyUserId,
     requiresInitiatorVerify: input.requiresInitiatorVerify,
-    payload: input.payload,
+    payload: semanticPayload(input.type, input.payload),
   };
   return JSON.stringify(canonicalize(semanticOnly));
 }
