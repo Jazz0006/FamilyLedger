@@ -261,9 +261,10 @@ describe('R6 v2 read model', () => {
 
     const pending = await listPendingRequests(ctx(repo, 'alice'), { limit: 10 });
     expect(pending.items).toHaveLength(1);
-    expect(pending.items[0]?.status).toBe(
+    expect(pending.items[0]?.request.status).toBe(
       LedgerRequestStatus.PENDING_INITIATOR_VERIFY,
     );
+    expect(pending.items[0]?.otherParty.displayName).toBe('Bob');
     expect((await getHomeSummary(ctx(repo, 'alice'))).pendingRequestCount).toBe(1);
   });
 
