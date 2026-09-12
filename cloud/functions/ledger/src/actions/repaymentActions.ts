@@ -21,6 +21,7 @@ import {
   getLoanCounterpartyUserId,
 } from '../domain/permissions.js';
 import { assertLedgerRequestTransition } from '../domain/request-state.js';
+import { assertPrincipalTimelineNonNegative } from '../domain/principal-timeline.js';
 import { AppError, ErrorCode } from '../errors.js';
 import {
   eventIdempotencyKey,
@@ -221,7 +222,7 @@ function buildFormalEvent(params: {
           `Repayment ${payload.amountFen} exceeds current principal ${principalFen}`,
         );
       }
-      return {
+      const candidate: NewLoanEvent = {
         ...base,
         eventType: LoanEventType.PRINCIPAL_REPAY,
         amountFen: payload.amountFen,
@@ -231,6 +232,8 @@ function buildFormalEvent(params: {
           'principal-repay',
         ),
       };
+      assertPrincipalTimelineNonNegative(params.currentEvents, candidate);
+      return candidate;
     }
     case LedgerRequestType.PRINCIPAL_ADD: {
       const payload = params.request.payload as PrincipalAddPayload;
