@@ -1,0 +1,7 @@
+.request-detail {
+  font-size: 30rpx;
+  margin: 24rpx 0 12rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 12rpx;
+  background: #f6f6f7;
+}
