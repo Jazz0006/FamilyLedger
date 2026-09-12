@@ -11,7 +11,7 @@ import {
   type UserDisplayProfile,
 } from '@family-ledger/shared';
 import { AppError, ErrorCode } from '../errors.js';
-import { hashToken } from '../crypto.js';
+import { generateRawToken, hashToken } from '../crypto.js';
 import { assertCreateLoanRequestStructure } from '../domain/validation.js';
 import { assertLedgerRequestTransition } from '../domain/request-state.js';
 import type { ActionContext } from './action-context.js';
@@ -101,7 +101,11 @@ export async function createLoanInvite(
 ): Promise<CreateLoanInviteResult> {
   const raw = objectInput(input, 'createLoanInvite');
   const requestId = normalizeRequestId(raw.requestId);
-  const rawToken = normalizeRawToken(raw.rawToken);
+  // Production callers should omit rawToken so the server generates the bearer
+  // credential from node:crypto. Supplying a token remains supported for
+  // deterministic tests and state-idempotent retry coverage.
+  const rawToken =
+    raw.rawToken === undefined ? generateRawToken() : normalizeRawToken(raw.rawToken);
   const actor = await requireCurrentUser(ctx);
 
   const request = await ctx.repo.getRequest(requestId);
