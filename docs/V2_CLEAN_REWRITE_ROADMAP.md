@@ -1,7 +1,7 @@
 # FamilyLedger v2 Clean Rewrite Roadmap
 
 **Status:** authoritative implementation roadmap for the v2 rewrite  
-**Date:** 2026-09-12 · refreshed through R12B  
+**Date:** 2026-09-12 · refreshed through R12C  
 **Scope:** implementation strategy and sequencing
 
 Business meaning and implementation shape are governed by:
@@ -178,7 +178,7 @@ Implemented:
 - first-contact proposer cancellation after claimant acceptance;
 - regression coverage for UI-facing profile/privacy and relationship boundaries.
 
-#### R12B — active v2 Mini Program cutover — DONE / VALIDATING
+#### R12B — active v2 Mini Program cutover — DONE
 
 The active Mini Program now contains only v2 user flows:
 
@@ -205,29 +205,34 @@ Implemented:
 - physical deletion of all `admin-*` Mini Program pages;
 - v2 app/project naming and client documentation.
 
-GitHub Actions now executes the full workspace build/typecheck/test gate on pushes/PRs. A successful CI checkpoint exists after the R12B code/test changes; each later documentation/head change must still be checked independently before claiming its head is green.
+#### R12C — Loan mutation proposal UI — DONE
 
-#### R12C — Loan mutation proposal UI — NEXT
-
-Add focused proposal forms from the Loan-detail context for server capabilities already implemented:
+Loan detail now exposes proposal-only UI for:
 
 1. PRINCIPAL_REPAY;
 2. PRINCIPAL_ADD;
 3. RATE_CHANGE;
-4. CORRECTION;
-5. CLOSE_LOAN.
+4. PRINCIPAL Correction;
+5. RATE Correction;
+6. CLOSE_LOAN.
 
-Rules:
+R12C preserves the server-authoritative model:
 
-- forms only propose; client never applies formal ledger effects directly;
-- use integer Fen parsing and explicit rate snapshots;
-- preserve mutation idempotency keys across unchanged network retries;
-- show exact action/amount/date/rate before submit;
-- closed Loans do not expose normal mutation entry points;
-- Correction UX must preserve typed principal-vs-rate semantics and target-event selection;
-- Close UX must communicate that it is a mutually confirmed settlement boundary, not an in-app payment.
+- form submission only creates `LedgerRequest`; it never applies formal ledger effects directly;
+- Yuan text is parsed to integer Fen and rate input becomes an explicit decimal-string snapshot;
+- mutation idempotency keys remain stable across unchanged network retries;
+- CLOSED Loans do not expose normal mutation entry points;
+- principal Correction selects only principal-affecting formal events;
+- rate Correction selects the current same-day rate winner and the confirmation UI shows the exact target event context;
+- Correction effective date remains derived from the selected target event, never supplied independently by the client;
+- Close is offered only when current principal is zero and no future formal event blocks the boundary; final authority remains server-side;
+- proposer-created PENDING requests are queryable through `listProposedRequests`, visible in the confirmation center and cancellable by the proposer;
+- first-contact proposals with no bound counterparty remain displayable as awaiting invite acceptance;
+- the home screen keeps request management discoverable even when there is nothing currently awaiting the user's own confirmation.
 
-#### R12D — real CloudBase / two-account hardening — AFTER R12C
+Full workspace GitHub Actions (`npm ci`, build, typecheck, test) is green through R12C checkpoint `57d6626d2fabfbda07f007a985cfcb1245a9e83f`.
+
+#### R12D — real CloudBase / two-account hardening — NEXT
 
 - provision and verify all required v2 collections/indexes from `schema-contract.ts`;
 - verify runtime OPENID identity behavior;
@@ -275,6 +280,7 @@ Before production cutover, coverage must include at minimum:
 - first-contact invite claim is single-winner;
 - first-contact accept does not create Loan before proposer verification;
 - proposer can reject a wrong claimant by cancellation without creating a Loan;
+- proposer can see and cancel their own still-PENDING normal proposals;
 - request fingerprint/idempotent retry conflict behavior;
 - atomic CREATE_LOAN genesis set;
 - paginated histories reconstruct completely;
@@ -296,6 +302,6 @@ Before production cutover, coverage must include at minimum:
 
 ## 8. Immediate next task
 
-Start **R12C — Loan mutation proposal UI** after confirming the latest R12B branch head remains green in CI.
+Start **R12D — real CloudBase / two-account hardening** from the green R12C checkpoint.
 
-Do not begin real production cutover merely because unit/workspace CI passes. R12D real CloudBase/two-account validation remains a separate mandatory gate.
+Do not declare production cutover complete merely because workspace CI passes. R12D real CloudBase transaction/index/OPENID/share/two-account validation remains a separate mandatory gate.
