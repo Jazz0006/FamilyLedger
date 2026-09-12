@@ -34,6 +34,36 @@ function makeIdempotencyKey(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function secureRandomToken() {
+  return new Promise((resolve, reject) => {
+    if (!wx.getRandomValues || !wx.arrayBufferToBase64) {
+      reject(new Error('当前微信版本不支持安全邀请凭证，请升级微信后重试'));
+      return;
+    }
+    wx.getRandomValues({
+      length: 32,
+      success(res) {
+        try {
+          const base64 = wx.arrayBufferToBase64(res.randomValues);
+          const token = base64
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+          if (!/^[A-Za-z0-9_-]{43}$/.test(token)) {
+            throw new Error('安全邀请凭证格式异常');
+          }
+          resolve(token);
+        } catch (err) {
+          reject(err instanceof Error ? err : new Error('无法生成安全邀请凭证'));
+        }
+      },
+      fail(err) {
+        reject(new Error((err && err.errMsg) || '无法生成安全邀请凭证'));
+      },
+    });
+  });
+}
+
 function ledgerToday() {
   return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
@@ -43,5 +73,6 @@ module.exports = {
   percentToRateString,
   formatRatePercent,
   makeIdempotencyKey,
+  secureRandomToken,
   ledgerToday,
 };
