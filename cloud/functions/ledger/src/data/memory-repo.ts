@@ -149,6 +149,11 @@ export class MemoryRepo implements LedgerRepo {
     return found ? cloneValue(found) : null;
   }
 
+  async getUserById(userId: string): Promise<User | null> {
+    const user = this.state.users.get(userId);
+    return user ? cloneValue(user) : null;
+  }
+
   async createUserIfOpenidFree(user: NewUser): Promise<CreateResult<User>> {
     const existing = [...this.state.users.values()].find(
       (item) => item.openid === user.openid,
