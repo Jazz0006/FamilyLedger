@@ -9,7 +9,8 @@
     "clean": "tsc --build --clean",
     "test": "vitest run --passWithNoTests",
     "bundle": "node scripts/bundle.mjs",
-    "schema:plan": "npm run build && node scripts/schema-plan.mjs"
+    "schema:plan": "npm run build && node scripts/schema-plan.mjs",
+    "deployment:check": "node scripts/deployment-contract.mjs"
   },
   "dependencies": {
     "@family-ledger/calc": "0.1.0",
