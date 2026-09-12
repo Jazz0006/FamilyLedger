@@ -1,13 +1,13 @@
 {
-  "$schema": "https://framework-1258016615.tcloudbaseapp.com/schema/latest.json",
-  "version": "2.0",
-  "envId": "cloudbase-d4gza0wljf6505629",
-  "functionRoot": "cloud/functions",
+  "$schema": "https://static.cloudbase.net/cli/cloudbaserc.schema.json",
+  "version": "2.1",
+  "envId": "{{env.CLOUDBASE_ENV_ID}}",
   "functions": [
     {
       "name": "ledger",
+      "dir": "./cloud/functions/ledger/dist-bundle",
       "timeout": 20,
-      "runtime": "Nodejs16.13",
+      "runtime": "Nodejs20.19",
       "installDependency": true,
       "handler": "index.main",
       "memorySize": 256
