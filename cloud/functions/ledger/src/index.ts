@@ -4,7 +4,10 @@ import { AppError, ErrorCode, type ApiResponse } from './errors.js';
 import { makeActionContext } from './actions/action-context.js';
 import { ensureUser } from './actions/ensureUser.js';
 import { createLoanRequest } from './actions/createLoanRequest.js';
-import { createKnownLoanRequest } from './actions/createKnownLoanRequest.js';
+import {
+  acceptKnownLoanRequest,
+  createKnownLoanRequest,
+} from './actions/createKnownLoanRequest.js';
 import {
   acceptInviteRequest,
   createLoanInvite,
@@ -56,6 +59,8 @@ export async function main(
         return ok(await createLoanRequest(ctx, event.payload));
       case 'createKnownLoanRequest':
         return ok(await createKnownLoanRequest(ctx, event.payload));
+      case 'acceptKnownLoanRequest':
+        return ok(await acceptKnownLoanRequest(ctx, event.payload));
       case 'createLoanInvite':
         return ok(await createLoanInvite(ctx, event.payload));
       case 'previewInvite':
