@@ -1,184 +1,162 @@
 # CLAUDE.md
 
-Guidance for working in this repo.
+Guidance for working in `Jazz0006/FamilyLedger`.
 
-## What this is
+## Authority
 
-`FamilyLedger` is being rewritten from a short-lived family-specific proof of concept into a general WeChat Mini Program for **mutually confirmed bilateral loan ledgers**.
+Use these documents in order for their respective concerns:
 
-Authoritative v2 docs:
+1. `docs/来往账_产品规划设计书_v2.0.md` — product/business meaning
+2. `docs/DATA_MODEL_V2.md` — target domain/persistence shape
+3. `docs/V2_CLEAN_REWRITE_ROADMAP.md` — implementation strategy and sequencing
+4. `AGENTS.md` — engineering boundaries
+5. milestone handoff/progress docs — current execution state
 
-- `docs/来往账_产品规划设计书_v2.0.md` — product/business meaning
-- `docs/DATA_MODEL_V2.md` — target domain and persistence shape
-- `docs/V2_CLEAN_REWRITE_ROADMAP.md` — authoritative implementation strategy and sequencing
-- `AGENTS.md` — engineering guardrails
+The v1.1 family-loan code/spec is historical reference only. Do not preserve its API, family/admin model, collection schema, or unfinished actions for compatibility.
 
-The old `docs/家庭借款账本_产品规划设计书_v1.1.md` and the v1.1 production code are historical/reference material only.
+## Current status
 
-**The v2 product spec wins over existing code.** Do not copy or extend legacy family/admin assumptions unless v2 explicitly retains the underlying behavior.
+R1 — Clean v2 Domain Rewrite is implemented on the rewrite branch.
 
-## Rewrite policy
+Active TypeScript server/domain code no longer contains the old family/admin action layer or v1 repository contract. The existing Mini Program pages are still the old UI and are temporary reference only; do not let them drive v2 server/domain design.
 
-v2 is a **clean rewrite of product/domain/application code inside the existing repository**, not a compatibility migration.
+The cloud router is intentionally disabled during R1 and returns `INVALID_STATE` until new v2 server actions are implemented. Do not restore old actions to make the UI appear functional.
 
-Hard rules:
+Current checkpoint:
 
-1. Do not build a backward-compatible v1.1 API layer.
-2. Do not dual-write v1.1 and v2 collections.
-3. Do not add permanent `familyId`, legacy-role, or compatibility branches to v2 code.
-4. Do not finish unfinished v1.1 features before building their v2 replacement.
-5. Assume v1.1 development/test data is disposable unless a concrete preservation requirement is identified.
-6. Keep old implementation history in Git rather than in production code.
-7. Reuse technical assets only when their semantics remain correct under v2.
-
-If real v1.1 data later needs preservation, handle it with a separate one-shot conversion after backup. Do not distort the v2 model to accommodate legacy records.
+- `docs/V2_R1_CLEAN_DOMAIN_PROGRESS_2026-09-12.md`
+- next: `docs/NEXT_DEVELOPMENT_HANDOFF_2026-09-12_V2_R2_STATE_MACHINE_PERMISSIONS_IDEMPOTENCY.md`
 
 ## v2 domain rules
 
 1. Every WeChat identity is a normal `User`.
-2. There is no global `BORROWER/LENDER` user role.
-3. There is no `familyId`, fixed family, or product-level admin.
-4. Borrower/lender roles belong to a specific `Loan` only.
-5. A Loan is one shared ledger viewed from opposite directions by its two parties.
-6. Never model the lender and borrower as separate synchronized balance copies.
-7. Any formal ledger change follows propose → counterparty consent → apply.
-8. First-contact invite flow additionally requires the initiator to verify the claimed counterparty before the first Loan becomes formal.
-9. Existing counterparties need only normal counterparty acceptance.
+2. There is no global borrower/lender role, fixed family, or product-level admin.
+3. Borrower/lender direction belongs to one `Loan` only.
+4. A Loan is one shared bilateral ledger, not two synchronized copies.
+5. Formal ledger mutation follows propose -> counterparty consent -> apply.
+6. First-contact invite acceptance additionally requires initiator verification before the first Loan becomes formal.
+7. Existing known counterparties use the normal pending-request flow.
 
 ## Non-negotiable invariants
 
-1. Money is integer **Fen / 分** and must satisfy `Number.isSafeInteger`.
-2. `loan_events` is append-only through normal product APIs. Corrections append compensating events.
-3. Principal/interest/total are derived, never stored as authoritative truth.
-4. Interest is calculated, not written daily.
-5. The numeric annual effective rate is an agreed snapshot. CPI may prefill a proposal, but external CPI updates must never silently change an existing Loan.
-6. `packages/calc` is the single source of truth for money math.
-7. v2 initially keeps `Asia/Shanghai` as the fixed ledger day boundary unless the spec is changed explicitly.
-8. Client code has no formal write authority. OPENID, user identity, permissions, state transitions, and final event creation are validated server-side.
-9. Writes are idempotent. The same idempotency key with a different semantic payload is a conflict.
-10. Request application and the corresponding formal writes must be transaction/CAS safe.
-11. Reads that can exceed one CloudBase page must paginate. Never reconstruct a balance from a potentially truncated event stream.
+- Money is integer Fen and must remain a safe integer.
+- `loan_events` are append-only through product APIs.
+- Principal/interest/total are derived from formal history.
+- `packages/calc` is the only money/interest calculation implementation.
+- Every v2 Loan has explicit confirmed rate history; there is no global fallback annual rate.
+- CPI/reference metadata may prefill a proposal but never silently changes an existing Loan.
+- Runtime OPENID is authoritative identity; never trust a client-supplied user ID as proof of identity.
+- Request application plus formal event creation must be transaction/CAS safe.
+- Idempotent retries with the same semantic payload return the same result; same key with a different semantic payload is a conflict.
+- Growing reads paginate; balance reconstruction must never use a truncated event stream.
 
-## Target v2 collections
+## Active v2 shared model
 
-- `users`
-- `loans`
-- `ledger_requests`
-- `loan_events`
-- `invite_tokens`
-- `audit_logs`
-- optional future `rate_references`
-
-Legacy `loan_accounts`, `loan_terms`, and `change_requests` are not part of the v2 target model.
-
-## Request model
-
-Target request types:
-
-- `CREATE_LOAN`
-- `PRINCIPAL_ADD`
-- `PRINCIPAL_REPAY`
-- `RATE_CHANGE`
-- `CORRECTION`
-- `CLOSE_LOAN`
-
-Target statuses:
-
-- `PENDING`
-- `PENDING_INITIATOR_VERIFY`
-- `APPLIED`
-- `REJECTED`
-- `CANCELLED`
-- `EXPIRED`
-
-Known-counterparty flow:
+Core concepts:
 
 ```text
-PENDING -> APPLIED | REJECTED | CANCELLED | EXPIRED
+User
+Loan
+LedgerRequest
+LoanEvent
+InviteToken
+RateSnapshot
 ```
 
-First-contact flow:
+Request types:
+
+```text
+CREATE_LOAN
+PRINCIPAL_ADD
+PRINCIPAL_REPAY
+RATE_CHANGE
+CORRECTION
+CLOSE_LOAN
+```
+
+Request states:
 
 ```text
 PENDING
-  -> PENDING_INITIATOR_VERIFY
-      -> APPLIED | CANCELLED | EXPIRED
-  -> REJECTED | CANCELLED | EXPIRED
+PENDING_INITIATOR_VERIFY
+APPLIED
+REJECTED
+CANCELLED
+EXPIRED
 ```
 
-`APPLIED` must be atomic with all Loan/LoanEvent changes created by that request.
+Target collections:
 
-## CREATE_LOAN application
+```text
+users
+loans
+ledger_requests
+loan_events
+invite_tokens
+audit_logs
+rate_references   # optional/future
+```
 
-When a new Loan becomes formal, one transaction must create:
+Legacy `loan_accounts`, `loan_terms`, and `change_requests` are not v2 collections.
 
-- the `Loan`;
-- initial `PRINCIPAL_ADD` event;
-- initial `RATE_CHANGE` event;
-- request `APPLIED` state;
-- invite finalization/consumption where applicable.
+## Architecture
 
-`sourceRequestId` is therefore **not unique** in v2: one CREATE_LOAN request intentionally creates more than one event. Keep event-level `idempotencyKey` unique instead.
+```text
+Mini Program UI
+      ↓
+Application Actions / Use Cases
+      ↓
+Domain + packages/calc
+      ↓
+Repository Interfaces
+      ↓
+CloudBase Repository / Infrastructure
+```
 
-## Layout
+Keep routers thin. Put business rules in focused pure/domain/action modules, CloudBase SDK calls in infrastructure, and money math in `packages/calc`.
 
-- `packages/shared` — domain types, enums, collection names, constants.
-- `packages/calc` — interest/balance engine + deterministic tests.
-- `cloud/functions/ledger` — server authority and action router.
-- `miniprogram` — WeChat native client.
-- `docs` — product/data/deployment/roadmap docs.
+## R1 behavior that must not be undone
 
-## Reuse vs rewrite
+Do not reintroduce:
 
-Good reuse candidates:
+- `UserRole.BORROWER/LENDER`;
+- `familyId` / `DEFAULT_FAMILY_ID`;
+- `bootstrapAdmin`;
+- admin-only direct `PRINCIPAL_ADD` or RATE_CHANGE;
+- v1 `LoanAccount`, `LoanTerm`, or `ChangeRequest` as active domain models;
+- v1 Repo/MemoryRepo/CloudBaseRepo contracts;
+- product-level default 5% rate fallback;
+- old `setupCollections` schema;
+- compatibility branches or dual writes.
 
-- valid `packages/calc` math and tests;
-- Fen/Decimal conventions;
-- date/timezone helpers with unchanged semantics;
-- OPENID server boundary;
-- crypto/token-hash utilities;
-- CloudBase build/deploy plumbing;
-- audit/idempotency concepts;
-- MemoryRepo testing technique.
+Git history is sufficient preservation for removed v1 code.
 
-Rewrite rather than migrate:
+## Current development order
 
-- shared domain types tied to family/admin semantics;
-- repository contract;
-- CloudBase persistence API shape;
-- actions/use cases;
-- invite flow;
-- router API set;
-- family/admin mini-program pages and data model.
+1. R1 — clean v2 domain + remove obsolete v1 server layer — implemented, executable validation pending
+2. R2 — request state machine, permissions, idempotency fingerprint
+3. R3 — v2 Repo / MemoryRepo / CloudBaseRepo, pagination, transaction primitives
+4. R4 — `ensureUser`
+5. R5 — CREATE_LOAN invite/accept/verify/apply closed loop
+6. R6 — bidirectional home/query flows
+7. R7 — repayment
+8. R8 — principal add / rate change / correction / close
+9. R9 — remove remaining v1 UI/docs/deployment residue
+10. R10 — CPI source, export/backup, UI polish, two-account regression
 
-## Commands
+## Testing
+
+Use tests-first for money, state transitions, permissions, idempotency, transaction-sensitive behavior, and event reconstruction.
+
+Most R2 behavior should be pure unit tests and must not depend on CloudBase. Use real CloudBase integration tests later for runtime OPENID, indexes, transactions, concurrent invite claim, and real two-user flows.
+
+Expected local/CI checks:
 
 ```bash
 npm install
 npm run build
+npm run typecheck
 npm test
 ```
 
-Keep ordinary domain/unit tests independent of live CloudBase. Use CloudBase integration tests for OPENID identity, transactions, unique indexes, invite claiming, and real two-user flows.
-
-## Development order
-
-Follow `docs/V2_CLEAN_REWRITE_ROADMAP.md`.
-
-Current sequence:
-
-1. **R0 — Freeze v1.1**
-2. **R1 — Clean v2 domain rewrite**
-3. **R2 — Request state machine, permissions, idempotency tests**
-4. **R3 — v2 LedgerRepo/MemoryRepo/CloudBase persistence + safety foundation**
-5. **R4 — `ensureUser`**
-6. **R5 — CREATE_LOAN invite/accept/verify/apply vertical slice**
-7. **R6 — read model + bidirectional home summary**
-8. **R7 — repayment vertical slice**
-9. **R8 — principal add / rate change / correction / close**
-10. **R9 — delete obsolete v1.1 production code and cut over**
-11. **R10 — audit/export/CPI/UI polish + two-account real-device regression**
-
-The immediate next task is **R1 — Clean v2 domain rewrite**. Do not begin by editing the mini-program UI or completing v1.1 cloud actions.
-
-Money/permission/state-machine changes are not complete until the authoritative docs and tests agree.
+Do not claim those checks passed unless they were actually executed.
