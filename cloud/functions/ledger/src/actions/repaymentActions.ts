@@ -455,7 +455,6 @@ export async function cancelRequest(
   return ctx.repo.runTransaction(async (tx) => {
     const request = await tx.getRequest(requestId);
     if (!request) throw new AppError(ErrorCode.NOT_FOUND, 'LedgerRequest not found');
-    assertSupportedKnownRequest(request);
     if (request.status === LedgerRequestStatus.CANCELLED) {
       if (actor._id !== request.proposerUserId) {
         throw new AppError(ErrorCode.FORBIDDEN, 'Only the proposer may cancel this request');
