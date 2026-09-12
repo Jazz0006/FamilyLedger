@@ -1,8 +1,8 @@
 {
   "name": "family-ledger",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "家庭借款账本 — WeChat Mini Program for transparent family loans (append-only ledger, dual confirmation).",
+  "description": "来往账 — mutually confirmed bilateral loan ledger for WeChat Mini Program",
   "type": "module",
   "engines": {
     "node": ">=20"
