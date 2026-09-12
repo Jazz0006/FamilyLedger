@@ -36,7 +36,7 @@ export interface CreateResult<T> {
 }
 
 /**
- * Transaction-scoped persistence operations used by future request-application
+ * Transaction-scoped persistence operations used by request-application
  * actions. The transaction owns all reads/writes in one atomic business change.
  */
 export interface LedgerTransaction {
@@ -44,6 +44,7 @@ export interface LedgerTransaction {
   putRequest(request: LedgerRequest): Promise<void>;
 
   getLoan(loanId: string): Promise<Loan | null>;
+  getLoanByCreatedFromRequestId(requestId: string): Promise<Loan | null>;
   createLoan(loan: NewLoan): Promise<Loan>;
 
   /**
@@ -54,6 +55,7 @@ export interface LedgerTransaction {
   appendEventIdempotent(event: NewLoanEvent): Promise<CreateResult<LoanEvent>>;
 
   getInvite(inviteId: string): Promise<InviteToken | null>;
+  getInviteByRequestId(requestId: string): Promise<InviteToken | null>;
   putInvite(invite: InviteToken): Promise<void>;
 }
 
@@ -88,8 +90,11 @@ export interface LedgerRepo {
     page: PageInput;
   }): Promise<Page<LoanEvent>>;
 
-  createInvite(invite: NewInviteToken): Promise<InviteToken>;
+  createInviteIfRequestFree(
+    invite: NewInviteToken,
+  ): Promise<CreateResult<InviteToken>>;
   getInviteByHash(tokenHash: string): Promise<InviteToken | null>;
+  getInviteByRequestId(requestId: string): Promise<InviteToken | null>;
 
   appendAudit(entry: NewAuditLog): Promise<void>;
 
