@@ -151,7 +151,7 @@ describe('request fingerprint', () => {
     expect(computeRequestFingerprint(a)).not.toBe(computeRequestFingerprint(b));
   });
 
-  it('does not hash transport/server-only fields passed accidentally', () => {
+  it('does not hash top-level transport/server-only fields passed accidentally', () => {
     const a = baseInput();
     const extended = {
       ...a,
@@ -162,6 +162,41 @@ describe('request fingerprint', () => {
     } as RequestFingerprintInput;
 
     expect(computeRequestFingerprint(extended)).toBe(computeRequestFingerprint(a));
+  });
+
+  it('does not hash non-semantic payload fields', () => {
+    const a = baseInput();
+    const extended = {
+      ...a,
+      payload: {
+        ...(a.payload as Record<string, unknown>),
+        uiDraftId: 'temporary-client-only-value',
+      },
+    } as RequestFingerprintInput;
+
+    expect(computeRequestFingerprint(extended)).toBe(computeRequestFingerprint(a));
+  });
+
+  it('normalizes absent optional note and explicit null note', () => {
+    const withoutNote: RequestFingerprintInput = {
+      ...baseInput(),
+      payload: {
+        amountFen: 12_300,
+        proposedEffectiveDate: '2026-09-12',
+      },
+    };
+    const nullNote: RequestFingerprintInput = {
+      ...withoutNote,
+      payload: {
+        amountFen: 12_300,
+        proposedEffectiveDate: '2026-09-12',
+        note: null,
+      },
+    };
+
+    expect(computeRequestFingerprint(withoutNote)).toBe(
+      computeRequestFingerprint(nullNote),
+    );
   });
 
   it('treats same idempotency key with different fingerprint as CONFLICT', () => {
