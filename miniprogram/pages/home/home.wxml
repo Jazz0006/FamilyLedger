@@ -24,7 +24,10 @@
       </view>
     </view>
 
-    <button class="btn-primary create-button" bindtap="goCreate">新建一笔往来</button>
+    <view class="home-actions">
+      <button class="btn-primary" bindtap="goCreate">新建一笔往来</button>
+      <button class="btn-secondary" bindtap="goConfirm">待确认与已发起</button>
+    </view>
 
     <view class="card">
       <view class="section-title">别人欠我的</view>
