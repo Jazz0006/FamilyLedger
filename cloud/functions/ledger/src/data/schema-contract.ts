@@ -15,6 +15,16 @@ export interface IndexSpec {
   purpose: string;
 }
 
+/** Collections required by the core v2 runtime. RATE_REFERENCES remains optional. */
+export const V2_REQUIRED_COLLECTIONS = [
+  Collections.USERS,
+  Collections.LOANS,
+  Collections.LEDGER_REQUESTS,
+  Collections.LOAN_EVENTS,
+  Collections.INVITE_TOKENS,
+  Collections.AUDIT_LOGS,
+] as const;
+
 export const V2_REQUIRED_INDEXES: readonly IndexSpec[] = [
   {
     collection: Collections.USERS,
@@ -83,7 +93,7 @@ export const V2_REQUIRED_INDEXES: readonly IndexSpec[] = [
       { field: '_id', order: 'desc' },
     ],
     unique: false,
-    purpose: 'first-contact requests awaiting initiator verification',
+    purpose: 'pending requests viewed by proposer, including initiator verification',
   },
   {
     collection: Collections.LEDGER_REQUESTS,
@@ -128,3 +138,36 @@ export const V2_REQUIRED_INDEXES: readonly IndexSpec[] = [
     purpose: 'one bearer invite token maps to one invite record',
   },
 ] as const;
+
+export interface MongoCreateIndexSpec {
+  key: Record<string, 1 | -1>;
+  name: string;
+  unique: boolean;
+}
+
+export interface MongoCreateIndexesCommand {
+  createIndexes: string;
+  indexes: MongoCreateIndexSpec[];
+}
+
+/**
+ * Convert the single authoritative schema contract into CloudBase/MongoDB-style
+ * createIndexes commands. Deployment tooling consumes this rather than keeping a
+ * second handwritten index manifest.
+ */
+export function buildCreateIndexesCommands(): MongoCreateIndexesCommand[] {
+  const grouped = new Map<string, MongoCreateIndexSpec[]>();
+  for (const index of V2_REQUIRED_INDEXES) {
+    const key: Record<string, 1 | -1> = {};
+    for (const field of index.fields) {
+      key[field.field] = field.order === 'asc' ? 1 : -1;
+    }
+    const list = grouped.get(index.collection) ?? [];
+    list.push({ key, name: index.name, unique: index.unique });
+    grouped.set(index.collection, list);
+  }
+  return [...grouped.entries()].map(([collection, indexes]) => ({
+    createIndexes: collection,
+    indexes,
+  }));
+}
