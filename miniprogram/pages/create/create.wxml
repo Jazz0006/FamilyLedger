@@ -7,10 +7,10 @@
     <view class="card">
       <view class="section-title">对方是谁</view>
       <view class="choice-row">
-        <button class="choice {{mode === 'FIRST' ? 'active' : ''}}" data-mode="FIRST" bindtap="chooseMode">新联系人</button>
-        <button class="choice {{mode === 'KNOWN' ? 'active' : ''}}" data-mode="KNOWN" bindtap="chooseMode" disabled="{{known.length === 0}}">已有往来人</button>
+        <button class="choice {{mode === 'FIRST' ? 'active' : ''}}" data-mode="FIRST" bindtap="chooseMode" disabled="{{submitted}}">新联系人</button>
+        <button class="choice {{mode === 'KNOWN' ? 'active' : ''}}" data-mode="KNOWN" bindtap="chooseMode" disabled="{{known.length === 0 || submitted}}">已有往来人</button>
       </view>
-      <picker wx:if="{{mode === 'KNOWN'}}" mode="selector" range="{{known}}" range-key="displayName" value="{{knownIndex}}" bindchange="onKnownChange">
+      <picker wx:if="{{mode === 'KNOWN'}}" disabled="{{submitted}}" mode="selector" range="{{known}}" range-key="displayName" value="{{knownIndex}}" bindchange="onKnownChange">
         <view class="picker">{{known[knownIndex].displayName || '请选择'}}</view>
       </picker>
       <text wx:if="{{known.length === 0}}" class="muted">还没有已有往来人，第一次需要通过邀请确认身份。</text>
@@ -19,31 +19,31 @@
     <view class="card">
       <view class="section-title">借款方向</view>
       <view class="choice-row">
-        <button class="choice {{direction === 'LEND' ? 'active' : ''}}" data-direction="LEND" bindtap="chooseDirection">我借给别人</button>
-        <button class="choice {{direction === 'BORROW' ? 'active' : ''}}" data-direction="BORROW" bindtap="chooseDirection">我向别人借</button>
+        <button class="choice {{direction === 'LEND' ? 'active' : ''}}" data-direction="LEND" bindtap="chooseDirection" disabled="{{submitted}}">我借给别人</button>
+        <button class="choice {{direction === 'BORROW' ? 'active' : ''}}" data-direction="BORROW" bindtap="chooseDirection" disabled="{{submitted}}">我向别人借</button>
       </view>
     </view>
 
     <view class="card">
       <view class="field">
         <text class="field-label">本金（元）</text>
-        <input class="input" type="digit" placeholder="例如 20000" value="{{amountYuan}}" bindinput="onAmountInput" />
+        <input class="input" disabled="{{submitted}}" type="digit" placeholder="例如 20000" value="{{amountYuan}}" bindinput="onAmountInput" />
       </view>
       <view class="field">
         <text class="field-label">年利率（%）</text>
-        <input class="input" type="digit" placeholder="例如 5" value="{{ratePercent}}" bindinput="onRateInput" />
+        <input class="input" disabled="{{submitted}}" type="digit" placeholder="例如 5" value="{{ratePercent}}" bindinput="onRateInput" />
       </view>
       <view class="field">
         <text class="field-label">生效日期</text>
-        <picker mode="date" value="{{effectiveDate}}" bindchange="onDateChange">
+        <picker disabled="{{submitted}}" mode="date" value="{{effectiveDate}}" bindchange="onDateChange">
           <view class="picker">{{effectiveDate}}</view>
         </picker>
       </view>
       <view class="field">
         <text class="field-label">备注（可选）</text>
-        <textarea class="input note" maxlength="500" placeholder="例如：装修借款" value="{{note}}" bindinput="onNoteInput"></textarea>
+        <textarea class="input note" disabled="{{submitted}}" maxlength="500" placeholder="例如：装修借款" value="{{note}}" bindinput="onNoteInput"></textarea>
       </view>
-      <button class="btn-primary" loading="{{submitting}}" disabled="{{submitting}}" bindtap="submit">发起确认</button>
+      <button class="btn-primary" loading="{{submitting}}" disabled="{{submitting || submitted}}" bindtap="submit">{{submitted ? '已发起确认' : '发起确认'}}</button>
     </view>
 
     <view wx:if="{{invitePath}}" class="card">
