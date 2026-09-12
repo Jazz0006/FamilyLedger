@@ -1,7 +1,6 @@
 import {
   Collections,
   LedgerRequestStatus,
-  type AuditLog,
   type InviteToken,
   type LedgerRequest,
   type Loan,
@@ -76,17 +75,22 @@ function stripLoanRecord(record: LoanRecord): Loan {
   return loan;
 }
 
+/**
+ * node-sdk's database get() caps one page at 100 records. To avoid limit+1
+ * overflowing that cap, a full page advertises a next cursor. If the full page
+ * happened to be the final exact multiple, the next read returns an empty page.
+ * That costs one bounded query but never truncates history.
+ */
 function pageFromCreatedAtRows<T extends { createdAt: number; _id: string }>(
   rows: T[],
   limit: number,
 ): Page<T> {
-  const hasMore = rows.length > limit;
   const items = rows.slice(0, limit);
   const last = items[items.length - 1];
   return {
     items,
     nextCursor:
-      hasMore && last
+      items.length === limit && last
         ? encodeCreatedAtCursor({ createdAt: last.createdAt, _id: last._id })
         : null,
   };
@@ -145,7 +149,7 @@ export class CloudBaseRepo implements LedgerRepo {
       .where(where)
       .orderBy('createdAt', 'desc')
       .orderBy('_id', 'desc')
-      .limit(params.page.limit + 1)
+      .limit(params.page.limit)
       .get();
     const rows = extractRows<LoanRecord>(response).map(stripLoanRecord);
     return pageFromCreatedAtRows(rows, params.page.limit);
@@ -220,7 +224,7 @@ export class CloudBaseRepo implements LedgerRepo {
       .where(where)
       .orderBy('createdAt', 'desc')
       .orderBy('_id', 'desc')
-      .limit(params.page.limit + 1)
+      .limit(params.page.limit)
       .get();
     return pageFromCreatedAtRows(
       extractRows<LedgerRequest>(response),
@@ -242,16 +246,16 @@ export class CloudBaseRepo implements LedgerRepo {
         sequence: this.db.command.gt(afterSequence),
       })
       .orderBy('sequence', 'asc')
-      .limit(params.page.limit + 1)
+      .limit(params.page.limit)
       .get();
-    const rows = extractRows<LoanEvent>(response);
-    const hasMore = rows.length > params.page.limit;
-    const items = rows.slice(0, params.page.limit);
+    const items = extractRows<LoanEvent>(response);
     const last = items[items.length - 1];
     return {
       items,
       nextCursor:
-        hasMore && last ? encodeSequenceCursor(last.sequence) : null,
+        items.length === params.page.limit && last
+          ? encodeSequenceCursor(last.sequence)
+          : null,
     };
   }
 
@@ -273,10 +277,10 @@ export class CloudBaseRepo implements LedgerRepo {
   async runTransaction<T>(
     work: (tx: LedgerTransaction) => Promise<T>,
   ): Promise<T> {
-    const response = await this.db.runTransaction(async (transaction) =>
+    // @cloudbase/node-sdk 3.x returns the callback's value directly.
+    return this.db.runTransaction(async (transaction) =>
       work(new CloudBaseTransaction(transaction)),
     );
-    return response.result as T;
   }
 }
 
@@ -304,7 +308,7 @@ class CloudBaseTransaction implements LedgerTransaction {
     await this.transaction
       .collection(Collections.LEDGER_REQUESTS)
       .doc(request._id)
-      .update({ data: withoutId(request) });
+      .update(withoutId(request));
   }
 
   async getLoan(loanId: string): Promise<Loan | null> {
@@ -346,7 +350,7 @@ class CloudBaseTransaction implements LedgerTransaction {
     await this.transaction
       .collection(Collections.LOANS)
       .doc(loanId)
-      .update({ data: { nextEventSequence: next } });
+      .update({ nextEventSequence: next });
     return Array.from({ length: count }, (_, index) => start! + index);
   }
 
@@ -380,7 +384,7 @@ class CloudBaseTransaction implements LedgerTransaction {
     await this.transaction
       .collection(Collections.INVITE_TOKENS)
       .doc(invite._id)
-      .update({ data: withoutId(invite) });
+      .update(withoutId(invite));
   }
 }
 
