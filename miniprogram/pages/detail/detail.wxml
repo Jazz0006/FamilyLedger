@@ -1,10 +1,35 @@
-<view wx:if="{{loading}}" class="card"><text class="label">加载中…</text></view>
-<view wx:elif="{{error}}" class="card"><text>{{error}}</text></view>
-<view wx:else class="card">
-  <text class="label">我的明细</text>
-  <view wx:for="{{events}}" wx:key="_id" class="event">
-    <text>{{item.effectiveDate}} · {{item.eventType}}</text>
-    <text>{{item.amount}}</text>
-  </view>
-  <text wx:if="{{events.length === 0}}" class="label">暂无记录</text>
+<view class="page">
+  <view wx:if="{{loading}}" class="card"><text class="muted">加载中…</text></view>
+  <view wx:elif="{{error}}" class="error">{{error}}</view>
+
+  <block wx:elif="{{loan}}">
+    <view class="card">
+      <view class="row">
+        <view>
+          <view class="section-title">{{loan.counterpartyName}}</view>
+          <text class="muted">{{loan.directionLabel}} · {{loan.statusLabel}}</text>
+        </view>
+        <text class="muted">截至 {{loan.asOfDate}}</text>
+      </view>
+      <view class="amount-hero">{{loan.total}}</view>
+      <view class="metrics">
+        <view><text class="label">本金</text><view>{{loan.principal}}</view></view>
+        <view><text class="label">利息</text><view>{{loan.interest}}</view></view>
+        <view><text class="label">今日利息</text><view>{{loan.todayInterest}}</view></view>
+        <view><text class="label">当前年利率</text><view>{{loan.rate}}%</view></view>
+      </view>
+    </view>
+
+    <view class="card">
+      <view class="section-title">正式账本事件</view>
+      <view wx:if="{{events.length === 0}}" class="empty">暂无事件</view>
+      <view wx:for="{{events}}" wx:key="id" class="event-row">
+        <view>
+          <view>{{item.title}}</view>
+          <text class="muted">{{item.effectiveDate}} · #{{item.sequence}}</text>
+        </view>
+        <view class="amount">{{item.value}}</view>
+      </view>
+    </view>
+  </block>
 </view>
