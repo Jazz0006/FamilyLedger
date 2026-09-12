@@ -1,9 +1,9 @@
 # FamilyLedger v2 — Data Model
 
 **Status:** authoritative implementation target for product spec v2.0  
-**Date:** 2026-09-12
+**Date:** 2026-09-12 · R9 semantics clarified
 
-This document translates `docs/来往账_产品规划设计书_v2.0.md` into concrete domain objects, collection shapes, indexes, state transitions, and migration rules.
+This document translates `docs/来往账_产品规划设计书_v2.0.md` into concrete domain objects, collection shapes, indexes, state transitions, transaction rules, and clean-rewrite implementation constraints.
 
 The product spec owns business meaning. This document owns implementation shape. If they diverge, fix both before merging production code.
 
@@ -21,9 +21,11 @@ The v2 model must support:
 - deterministic balance reconstruction;
 - first-contact invite binding without trusting client-supplied identity;
 - idempotent retries and concurrency-safe confirmation;
-- future rate sources such as CPI without hard-coding a single global 5% rule.
+- future rate sources such as CPI without hard-coding a single global 5% rule;
+- explicit compensating corrections rather than event edits;
+- a mutually confirmed close/settlement boundary without pretending the app moved money.
 
-The v2 model must not contain global family/admin semantics.
+The v2 model must not contain global family/admin semantics or a v1 compatibility layer.
 
 ---
 
@@ -34,7 +36,7 @@ Target collections:
 | Collection | Purpose |
 |---|---|
 | `users` | WeChat-backed product identities |
-| `loans` | Static bilateral debt relationships |
+| `loans` | Static bilateral debt relationships plus lifecycle status |
 | `ledger_requests` | Proposed changes awaiting mutual consent |
 | `loan_events` | Immutable applied ledger history |
 | `invite_tokens` | First-contact invitation/claim credentials |
@@ -100,7 +102,7 @@ export interface User {
 
 ## 5. Loan
 
-A Loan is the static identity of one debt relationship.
+A Loan is the identity and lifecycle container of one debt relationship.
 
 ```ts
 export const LoanStatus = {
@@ -119,10 +121,11 @@ export interface Loan {
   /** The CREATE_LOAN request that atomically created this Loan. */
   createdFromRequestId: RequestId;
 
-  /** Operational projection; formal close history remains in events/audit. */
+  /** Operational lifecycle projection; formal history remains in events. */
   status: LoanStatus;
 
   createdAt: EpochMillis;
+  /** Server timestamp when CLOSE_LOAN was applied, not the ledger effective date. */
   closedAt: EpochMillis | null;
 }
 ```
@@ -132,19 +135,24 @@ export interface Loan {
 - `lenderUserId !== borrowerUserId`.
 - Both users must exist.
 - Parties are immutable after creation.
-- No current principal, interest, or balance is stored as authoritative truth on Loan.
+- No current principal, interest, or total balance is stored as authoritative truth on Loan.
 - Same two users may have multiple Loans.
 - Same two users may also have Loans in opposite directions.
+- Once status becomes CLOSED, normal principal/rate/correction requests can no longer apply.
+
+### Infrastructure-only persisted field
+
+CloudBase may persist a private infrastructure counter such as `nextEventSequence` on the Loan document to allocate monotonically ordered formal events. It is not part of the accounting/domain `Loan` interface and must not become a balance source.
 
 ### Required indexes
 
 - unique: `loans.createdFromRequestId`
-- query: `loans.lenderUserId + status`
-- query: `loans.borrowerUserId + status`
+- query: `loans.lenderUserId + status + createdAt + _id`
+- query: `loans.borrowerUserId + status + createdAt + _id`
 
 Optional future performance index:
 
-- compound/indexed pair of `lenderUserId + borrowerUserId`
+- `lenderUserId + borrowerUserId`
 
 ---
 
@@ -164,8 +172,6 @@ export interface RateSnapshot {
   rateReferenceLabel?: string | null;
 }
 ```
-
-### Important semantic rule
 
 The numeric `annualEffectiveRate` is a snapshot agreed by both parties.
 
@@ -201,16 +207,13 @@ export type LedgerRequestStatus =
   (typeof LedgerRequestStatus)[keyof typeof LedgerRequestStatus];
 ```
 
-Use a typed payload union rather than one loose bag of fields:
+### Payloads
 
 ```ts
 export interface CreateLoanPayload {
   borrowerUserId: UserId | null;
   lenderUserId: UserId | null;
-
-  /** Exactly one party may initially be unknown for a first-contact invite. */
   unknownPartyRole: 'BORROWER' | 'LENDER' | null;
-
   initialPrincipalFen: Fen;
   rate: RateSnapshot;
   proposedEffectiveDate: IsoDate;
@@ -223,6 +226,7 @@ export interface PrincipalAddPayload {
   note?: string | null;
 }
 
+/** Principal reduction only; not a generic cash-payment allocation. */
 export interface PrincipalRepayPayload {
   amountFen: Fen;
   proposedEffectiveDate: IsoDate;
@@ -234,26 +238,47 @@ export interface RateChangePayload {
   proposedEffectiveDate: IsoDate;
   note?: string | null;
 }
+```
 
-export interface CorrectionPayload {
+### Correction payload — discriminated MVP union
+
+Correction input does **not** carry a client-selected effective date. The formal Correction event inherits the target event's effective date server-side.
+
+```ts
+export interface PrincipalCorrectionPayload {
+  correctionKind: 'PRINCIPAL';
   targetEventId: EventId;
-  /**
-   * Compensating change, not replacement of the original event.
-   * Exact subtype should be narrowed further when implementation begins.
-   */
-  principalDeltaFen?: Fen;
-  replacementRate?: RateSnapshot;
-  proposedEffectiveDate: IsoDate;
+  /** Signed, non-zero compensation. */
+  principalDeltaFen: Fen;
   reason?: string | null;
 }
 
+export interface RateCorrectionPayload {
+  correctionKind: 'RATE';
+  targetEventId: EventId;
+  replacementRate: RateSnapshot;
+  reason?: string | null;
+}
+
+export type CorrectionPayload =
+  | PrincipalCorrectionPayload
+  | RateCorrectionPayload;
+```
+
+One Correction request has exactly one correction dimension and creates exactly one formal `CORRECTION` event in MVP.
+
+### Close payload
+
+```ts
 export interface CloseLoanPayload {
   proposedEffectiveDate: IsoDate;
   note?: string | null;
 }
 ```
 
-Base record:
+Acceptance semantics, not a fake payment field, define closure: principal must be zero, remaining calculated interest is snapshot and jointly acknowledged as settled/waived/otherwise handled offline, and current balance is zero from the close date onward.
+
+### Base record
 
 ```ts
 export interface LedgerRequest {
@@ -273,11 +298,10 @@ export interface LedgerRequest {
     | CloseLoanPayload;
 
   status: LedgerRequestStatus;
-
   /** True only for first-contact invite flow. */
   requiresInitiatorVerify: boolean;
 
-  /** Client generated. Reusing with different payload is a conflict. */
+  /** Client generated. Reusing with different semantics is a conflict. */
   idempotencyKey: string;
   requestFingerprint: string;
 
@@ -292,14 +316,16 @@ export interface LedgerRequest {
 
 A unique idempotency key alone is not enough.
 
-On retry, the server must compare a canonical fingerprint of the semantic request. If the same key arrives with a different amount/loan/type/payload, return `CONFLICT`; do not return the old request as if the new operation succeeded.
+On retry, the server compares a canonical fingerprint of semantic request fields. Same key + same fingerprint returns the original semantic result. Same key + different semantic payload returns `CONFLICT`.
+
+For first-contact CREATE_LOAN, the fingerprint describes the original proposal; server-side invite binding later fills the unknown counterparty identity without reinterpreting a changed client proposal.
 
 ### Required indexes
 
 - unique: `ledger_requests.idempotencyKey`
-- query: `ledger_requests.proposerUserId + status`
-- query: `ledger_requests.counterpartyUserId + status`
-- query: `ledger_requests.loanId + createdAt`
+- query: `ledger_requests.proposerUserId + status + createdAt + _id`
+- query: `ledger_requests.counterpartyUserId + status + createdAt + _id`
+- query: `ledger_requests.loanId + createdAt + _id`
 
 ---
 
@@ -332,7 +358,7 @@ PENDING
 
 No other transition is legal.
 
-All transition checks must be server-side and use transaction/CAS semantics.
+All transition checks are server-side and use transaction/CAS semantics.
 
 ---
 
@@ -351,6 +377,14 @@ export const LoanEventType = {
 export type LoanEventType =
   (typeof LoanEventType)[keyof typeof LoanEventType];
 
+export interface CloseSettlementSnapshot {
+  /**
+   * Server-calculated accrued interest immediately before the settlement
+   * boundary. It is an audit snapshot, not proof of an in-app payment.
+   */
+  accruedInterestFen: Fen;
+}
+
 export interface LoanEvent {
   _id: EventId;
   loanId: LoanId;
@@ -359,25 +393,34 @@ export interface LoanEvent {
   amountFen: Fen | null;
   rate?: RateSnapshot;
   targetEventId?: EventId | null;
+  closeSettlement?: CloseSettlementSnapshot;
 
   effectiveDate: IsoDate;
-
-  /** Request whose application created this event. */
   sourceRequestId: RequestId;
-
   createdBy: UserId;
   confirmedBy: UserId;
 
-  /** Stable ordering inside one Loan when dates/timestamps tie. */
+  /** Stable ordering inside one Loan when dates tie. */
   sequence: number;
 
-  /** Unique per generated event, not necessarily equal to request idempotency key. */
+  /** Unique per generated event, not equal to client request idempotency key. */
   idempotencyKey: string;
 
   createdAt: EpochMillis;
   schemaVersion: 2;
 }
 ```
+
+### Event-specific shape constraints
+
+- `PRINCIPAL_ADD`: positive `amountFen`; no rate/closeSettlement.
+- `PRINCIPAL_REPAY`: positive `amountFen`; no rate/closeSettlement.
+- `RATE_CHANGE`: `amountFen=null`; required `rate`; no closeSettlement.
+- principal `CORRECTION`: signed non-zero `amountFen`; no rate; required `targetEventId`.
+- rate `CORRECTION`: `amountFen=null`; required `rate` and `targetEventId`.
+- `LOAN_CLOSED`: `amountFen=null`; no rate; required `closeSettlement`; no targetEventId.
+
+A CORRECTION event must never contain both a principal amount and a replacement rate.
 
 ### Event generation per request
 
@@ -387,47 +430,110 @@ export interface LoanEvent {
 | PRINCIPAL_ADD | `PRINCIPAL_ADD` |
 | PRINCIPAL_REPAY | `PRINCIPAL_REPAY` |
 | RATE_CHANGE | `RATE_CHANGE` |
-| CORRECTION | one or more compensating event(s), implementation must be deterministic |
-| CLOSE_LOAN | `LOAN_CLOSED` |
+| CORRECTION | exactly one `CORRECTION` in MVP |
+| CLOSE_LOAN | exactly one `LOAN_CLOSED` |
 
-A CREATE_LOAN request intentionally creates two genesis events so the existing calculation model can migrate without introducing a second source of truth for initial principal/rate.
+A CREATE_LOAN request intentionally creates two genesis events so there is no second source of truth for initial principal/rate.
 
-### Important index change from v1.1
+### Deterministic event keys
 
-`sourceRequestId` **must not be globally unique** in v2 because one `CREATE_LOAN` request creates more than one event.
-
-Instead require:
-
-- unique: `loan_events.idempotencyKey`
-- unique or strongly enforced ordering: `loan_events.loanId + sequence`
-- query: `loan_events.loanId + sequence`
-- query: `loan_events.sourceRequestId`
-
-Example event idempotency keys derived server-side:
+Examples:
 
 ```text
-<requestId>:principal-add
+<requestId>:initial-principal
 <requestId>:initial-rate
-<requestId>:repay
+<requestId>:principal-add
+<requestId>:principal-repay
+<requestId>:rate-change
+<requestId>:correction
+<requestId>:loan-close
 ```
+
+### Required indexes
+
+`sourceRequestId` **must not be globally unique** because CREATE_LOAN intentionally creates two events.
+
+Require:
+
+- unique: `loan_events.idempotencyKey`
+- unique: `loan_events.loanId + sequence`
+- query: `loan_events.loanId + sequence`
+- query: `loan_events.sourceRequestId`
 
 ---
 
 ## 10. Event ordering
 
-Every Loan must have stable event order independent of database natural order.
+Every Loan has stable event order independent of database natural order.
 
-Preferred rule:
+Rules:
 
-1. primary: `effectiveDate` for calculation semantics;
-2. tie-breaking/application order: monotonic `sequence` assigned transactionally per Loan;
-3. `createdAt` is audit metadata, not the sole ordering guarantee.
+1. `effectiveDate` controls accounting/calculation date semantics;
+2. monotonic per-Loan `sequence` is the deterministic tie-break and application order;
+3. `createdAt` is audit metadata, not the ordering guarantee.
 
-If implementing a transactional monotonic sequence is unnecessarily expensive in CloudBase, a deterministic alternative may be chosen, but it must be documented and covered by tests before production use.
+For rate-affecting events with the same effectiveDate, the highest sequence wins. `packages/calc` and read-model `currentRate` must use the same rule.
+
+For principal timeline safety validation, events are grouped/ordered by effectiveDate and sequence so backdated compensation cannot create a hidden negative-principal interval.
 
 ---
 
-## 11. InviteToken
+## 11. Correction target rules
+
+### Principal correction
+
+Allowed targets:
+
+- `PRINCIPAL_ADD`;
+- `PRINCIPAL_REPAY`;
+- a previous principal-kind `CORRECTION`.
+
+Target must belong to the same Loan. The Correction event inherits `target.effectiveDate`.
+
+At acceptance, insert the candidate compensation into the replayed timeline and reject if principal is negative at any ledger-day boundary from that effective date onward.
+
+### Rate correction
+
+Allowed targets:
+
+- `RATE_CHANGE`;
+- a previous rate-kind `CORRECTION`.
+
+Target must belong to the same Loan and must be the current winning rate-affecting event on its effectiveDate (highest sequence for that date). The new correction inherits the target effectiveDate and its later sequence becomes the new winner.
+
+### Explicit non-goals
+
+MVP Correction does not directly correct an event's `effectiveDate`. A date-correction feature would require explicit reverse-and-reapply semantics and is deferred.
+
+---
+
+## 12. Close / settlement rules
+
+`CLOSE_LOAN` is a lifecycle + settlement boundary, not a payment event.
+
+At acceptance, inside one transaction:
+
+1. request is PENDING and actor is counterparty;
+2. Loan is ACTIVE and request parties match Loan parties;
+3. complete formal event history is read in the same transaction snapshot;
+4. `proposedEffectiveDate <= ledgerToday(serverNow)`;
+5. close effectiveDate is on/after every existing formal event effectiveDate;
+6. balance at close date is reconstructed;
+7. `principalFen === 0` is required;
+8. `interestFen >= 0` is required;
+9. server creates `LOAN_CLOSED` with `closeSettlement.accruedInterestFen = interestFen`;
+10. Loan status becomes CLOSED and `closedAt = serverNow`;
+11. request becomes APPLIED.
+
+All writes are atomic.
+
+The close acceptance itself means both parties agree the residual accrued interest shown by the system has been settled, waived, rounded, or otherwise handled offline. No separate cash-payment fact is invented.
+
+After Loan status becomes CLOSED, pending normal change/correction requests must fail application because they require an ACTIVE Loan.
+
+---
+
+## 13. InviteToken
 
 ```ts
 export const InviteStatus = {
@@ -442,12 +548,9 @@ export interface InviteToken {
   _id: InviteId;
   requestId: RequestId;
   tokenHash: string;
-
   status: InviteStatus;
-
   createdByUserId: UserId;
   claimedByUserId: UserId | null;
-
   createdAt: EpochMillis;
   claimedAt: EpochMillis | null;
   expiresAt: EpochMillis;
@@ -455,27 +558,25 @@ export interface InviteToken {
 }
 ```
 
-### Rules
+Rules:
 
 - Store only token hash.
 - Token points to one specific LedgerRequest.
 - Only first valid claim may bind `claimedByUserId`.
-- Invite claim must never let the client choose arbitrary user IDs.
 - Claiming user is resolved from runtime OPENID.
-- For first-contact CREATE_LOAN, claim binds the previously unknown borrower/lender position in request payload.
+- For first-contact CREATE_LOAN, claim binds the previously unknown party in request payload.
 - A token cannot be reused to create multiple counterparties.
+- Retrying invite issuance must not generate multiple semantically different active credentials for the same intended request retry.
 
-### Required indexes
+Required indexes:
 
 - unique: `invite_tokens.tokenHash`
-- unique or one-active-at-a-time policy: `invite_tokens.requestId` as appropriate
+- one-active-at-a-time / unique request policy as implemented for `invite_tokens.requestId`
 - query: `invite_tokens.expiresAt + status`
 
 ---
 
-## 12. AuditLog
-
-Current structure is broadly reusable:
+## 14. AuditLog
 
 ```ts
 export interface AuditLog {
@@ -497,9 +598,9 @@ Do not store raw invite tokens in audit details.
 
 ---
 
-## 13. Optional RateReference
+## 15. Optional RateReference
 
-Not required for the first migration milestone.
+Not required for the core MVP.
 
 ```ts
 export interface RateReference {
@@ -515,13 +616,11 @@ export interface RateReference {
 }
 ```
 
-This collection is only a source for prefilling proposals.
-
-It must never retroactively mutate existing LoanEvent rate snapshots.
+This collection is only a source for prefilling proposals. It must never retroactively mutate existing LoanEvent rate snapshots.
 
 ---
 
-## 14. Derived views
+## 16. Derived views
 
 These are query results, not authoritative collections.
 
@@ -545,6 +644,8 @@ export interface UserHomeSummary {
 }
 ```
 
+Only ACTIVE Loans enter current receivable/payable totals.
+
 ### LoanSummary
 
 ```ts
@@ -552,20 +653,41 @@ export interface LoanSummary {
   loanId: LoanId;
   lenderUserId: UserId;
   borrowerUserId: UserId;
+  status: LoanStatus;
+
   principalFen: Fen;
   interestFen: Fen;
   totalFen: Fen;
   todayInterestFen: Fen;
   currentRate: RateSnapshot;
   asOfDate: IsoDate;
+
+  closeEffectiveDate: IsoDate | null;
+  /** Historical accrued interest discharged by the close settlement. */
+  settledInterestFen: Fen | null;
 }
 ```
 
-Never persist these values as the only source of truth.
+For ACTIVE Loans, close fields are null.
+
+For a CLOSED Loan current projection at/after the close effectiveDate:
+
+```text
+principalFen = 0
+interestFen = 0
+totalFen = 0
+todayInterestFen = 0
+```
+
+`settledInterestFen` comes from `LOAN_CLOSED.closeSettlement.accruedInterestFen`.
+
+Historical as-of projection before close continues to replay pre-close events normally.
+
+Never persist `LoanSummary` values as accounting truth.
 
 ---
 
-## 15. Permission matrix
+## 17. Permission matrix
 
 For Loan-scoped operations:
 
@@ -574,79 +696,129 @@ For Loan-scoped operations:
 | Read Loan | ✓ | ✓ | ✗ |
 | Read Loan events | ✓ | ✓ | ✗ |
 | Propose add principal | ✓ | ✓ | ✗ |
-| Propose repayment | ✓ | ✓ | ✗ |
+| Propose principal repayment | ✓ | ✓ | ✗ |
 | Propose rate change | ✓ | ✓ | ✗ |
 | Propose correction | ✓ | ✓ | ✗ |
+| Propose close | ✓ | ✓ | ✗ |
 | Accept counterparty request | ✓ | ✓ | ✗ |
 | Reject counterparty request | ✓ | ✓ | ✗ |
 | Cancel own pending request | if proposer | if proposer | ✗ |
 
-For CREATE_LOAN first-contact invites, an unrelated user only becomes the candidate counterparty by successfully claiming the invite with their runtime OPENID.
+For first-contact CREATE_LOAN, an unrelated user only becomes candidate counterparty by successfully claiming the invite with runtime OPENID.
+
+Once Loan is CLOSED, no new formal change/correction may apply to it.
 
 ---
 
-## 16. Atomic transaction boundaries
+## 18. Atomic transaction boundaries
 
 ### Apply CREATE_LOAN
 
-One transaction must cover at minimum:
+One transaction covers at minimum:
 
-- lock/check request status;
-- verify correct acting user;
+- check request status and actor;
 - bind final counterparty identity if applicable;
 - create Loan;
 - create initial PRINCIPAL_ADD event;
 - create initial RATE_CHANGE event;
 - mark request APPLIED;
-- mark invite consumed/claimed final as needed.
+- finalize invite state as needed.
 
-Audit may be included in the same transaction where practical. If not, audit failure must not cause the client to retry in a way that duplicates business state.
+### Apply PRINCIPAL_REPAY
 
-### Apply normal request
+One transaction covers:
 
-One transaction must cover:
+- reload request + ACTIVE Loan;
+- verify actor/counterparty and participant consistency;
+- page through complete LoanEvent history inside transaction snapshot;
+- reconstruct principal as proposed effective date;
+- require repayment <= principal;
+- allocate sequence;
+- append `PRINCIPAL_REPAY`;
+- request -> APPLIED.
 
-- check request is PENDING;
-- check actor is the counterparty, not proposer;
-- reload current Loan and complete balance state required for validation;
-- enforce current constraints such as repayment <= principal;
-- append event(s);
-- transition request to APPLIED.
+### Apply PRINCIPAL_ADD / RATE_CHANGE
+
+One transaction covers:
+
+- reload request + ACTIVE Loan;
+- verify actor/counterparty and participants;
+- validate request payload;
+- allocate sequence;
+- append deterministic formal event;
+- request -> APPLIED.
+
+### Apply CORRECTION
+
+One transaction covers:
+
+- reload request + ACTIVE Loan;
+- verify actor/counterparty;
+- load complete event stream;
+- find and validate target event;
+- derive effectiveDate from target;
+- for principal correction, replay candidate timeline and prohibit negative principal at any affected ledger-day boundary;
+- for rate correction, require target is current winning rate event for that effectiveDate;
+- allocate sequence;
+- append one deterministic `CORRECTION`;
+- request -> APPLIED.
+
+### Apply CLOSE_LOAN
+
+One transaction covers all rules in section 12, including:
+
+- full event replay;
+- principal == 0;
+- residual-interest snapshot;
+- append LOAN_CLOSED;
+- Loan ACTIVE -> CLOSED and closedAt update;
+- request -> APPLIED.
+
+Audit may be inside the same transaction where practical. If audit is outside, audit failure must never trigger duplicate business mutation.
 
 ---
 
-## 17. Pagination requirement
+## 19. Pagination requirement
 
 Every collection read that can grow beyond one CloudBase page must paginate until complete or use a bounded indexed query whose limit is part of the business contract.
 
-This is especially mandatory for:
+This is mandatory for:
 
 - `loan_events` reconstruction;
+- transaction-scoped balance validation;
 - user Loan lists;
 - user pending/history request lists;
 - audit/export tools.
 
-No balance calculation may assume a single database `.get()` call returned the full event stream.
+No balance or correction/close validation may assume one `.get()` returned the full stream.
 
 ---
 
-## 18. Balance reconstruction rules
+## 20. Balance reconstruction rules
 
-A Loan balance is reconstructed from ordered LoanEvents.
+For an ACTIVE Loan:
 
-At minimum:
+- `PRINCIPAL_ADD`: increases outstanding principal from effectiveDate;
+- `PRINCIPAL_REPAY`: decreases principal from effectiveDate;
+- `RATE_CHANGE`: changes annual effective rate from effectiveDate;
+- principal `CORRECTION`: applies only its signed compensating principal effect;
+- rate `CORRECTION`: applies only its replacement rate from target effectiveDate;
+- original target events remain in history;
+- same-day rate precedence uses higher event sequence.
 
-- `PRINCIPAL_ADD`: increases outstanding principal from its effective date;
-- `PRINCIPAL_REPAY`: decreases outstanding principal from its effective date;
-- `RATE_CHANGE`: changes the annual effective rate from its effective date;
-- `CORRECTION`: applies only its explicit compensating effect; it never mutates the target event;
-- `LOAN_CLOSED`: changes lifecycle state, not historical math before close.
+CREATE_LOAN always writes an initial RATE_CHANGE, so there is no implicit historical default rate.
 
-The calculation engine must define the rate in effect before the first later `RATE_CHANGE`. For v2 CREATE_LOAN this is guaranteed by writing an initial rate event alongside the first principal event.
+### CLOSED Loan
+
+`LOAN_CLOSED` does not rewrite calculations for historical dates before close.
+
+At/after the close effectiveDate, product current-settlement projection is zero because both parties explicitly discharged the remaining claim. Future interest does not accrue after the settlement boundary.
+
+The close event preserves the pre-close residual accrued-interest snapshot for audit/display.
 
 ---
 
-## 19. Idempotency contract
+## 21. Idempotency contract
 
 Every client-originated mutation has an idempotency key.
 
@@ -655,58 +827,66 @@ Server handling:
 1. canonicalize semantic request fields;
 2. compute `requestFingerprint`;
 3. lookup existing request by idempotency key;
-4. if absent, continue create;
+4. if absent, create;
 5. if present and fingerprint matches, return original semantic result;
 6. if present and fingerprint differs, return conflict.
 
-Server-created LoanEvents use deterministic derived idempotency keys so retrying an apply transaction cannot append a second equivalent event.
+Server-created LoanEvents use deterministic derived keys. Same event key with different semantic content is a conflict.
+
+For Correction, canonical fingerprint includes:
+
+- correctionKind;
+- targetEventId;
+- principalDeltaFen **or** replacementRate;
+- reason normalization as defined by request semantics.
+
+Correction effectiveDate is not a client fingerprint input because it is derived from the target event.
 
 ---
 
-## 20. v1.1 → v2 field migration map
+## 22. Clean rewrite map
 
-| v1.1 | v2.0 |
+| v1.1 concept | v2 treatment |
 |---|---|
 | `User.role` | remove |
 | `User.familyId` | remove |
-| `LoanAccount` | `Loan` |
+| `LoanAccount` | replace with `Loan` |
 | `LoanAccount.familyId` | remove |
-| `LoanAccount.lenderUserId` | keep on Loan |
-| `LoanAccount.borrowerUserId` | keep on Loan |
-| `ChangeRequest` | `LedgerRequest` |
+| `ChangeRequest` | replace with `LedgerRequest` |
 | `requiredConfirmer` | derive from proposer + Loan parties |
-| `InviteToken.familyId` | remove |
-| `InviteToken.displayName` | remove from authority model |
-| `InviteToken.role` | replace with request `unknownPartyRole` |
-| `InviteToken.consumedUserId` | `claimedByUserId` |
-| `LoanTerm` | remove as truth; rate truth lives in RATE_CHANGE events |
-| `LoanEvent.sourceRequestId unique` | no longer unique; query index only |
+| family invite authority fields | remove |
+| `InviteToken.role` | request `unknownPartyRole` only for first contact |
+| `LoanTerm` | remove as truth; rate lives in RATE_CHANGE/CORRECTION history |
+| `LoanEvent.sourceRequestId unique` | remove uniqueness; query index only |
 | `LoanEvent.idempotencyKey` | keep unique |
 | `AuditLog` | keep, adapt action names |
 | `DEFAULT_FAMILY_ID` | remove |
-| global 5% default | remove; proposal default becomes CPI-reference capable |
+| global 5% default | remove |
+
+v2 does not preserve runtime compatibility with these concepts.
 
 ---
 
-## 21. Legacy data handling
+## 23. Legacy data handling
 
-Current repository data is development-stage v1.1 data. Do not build a complex production migration before confirming there is real data worth preserving.
+The repository's v1.1 data is development-stage PoC data, not a production compatibility contract.
 
-Recommended implementation strategy:
+Default strategy:
 
-1. implement v2 types and collections in code/tests;
-2. preserve old collections temporarily for rollback/reference;
-3. develop a one-shot migration only if existing CloudBase records need preservation;
-4. once v2 flows are validated, remove legacy writes;
-5. remove legacy collections only after explicit backup/export.
+1. build and validate only v2 collections/flows;
+2. do not dual-write;
+3. do not add `if (familyId)` or global-role compatibility branches;
+4. keep Git history as the v1 source reference;
+5. if CloudBase contains only test data, discard/archive it rather than writing a migration framework;
+6. only if valuable real historical records are later identified, design a separate one-shot import with explicit provenance.
 
-Do not silently reinterpret a v1.1 admin-created event as mutual-consent v2 history. If legacy data is migrated, mark provenance/schema version clearly.
+Never silently reinterpret an old unilateral admin-created event as mutual-consent v2 history.
 
 ---
 
-## 22. API action target set
+## 24. API action target set
 
-Suggested v2 cloud actions:
+Implemented/currently planned semantic surface:
 
 ```text
 ensureUser
@@ -733,35 +913,38 @@ rejectRequest
 cancelRequest
 ```
 
-This is a semantic target, not a requirement to implement every endpoint in the first migration commit.
+`acceptRequest/rejectRequest/cancelRequest` may be shared across implemented known-counterparty request types, but unsupported request types must fail closed until their validation semantics exist.
 
 ---
 
-## 23. Test requirements before v2 production use
+## 25. Test requirements before v2 production use
 
-At minimum add tests for:
+At minimum cover:
 
 - a user can be lender in one Loan and borrower in another;
 - unrelated users cannot read either Loan;
-- first-contact invite can be claimed only once under true concurrent attempts;
+- first-contact invite can be claimed only once under concurrent attempts;
 - first-contact acceptance does not create Loan before initiator verification;
-- known-counterparty acceptance applies directly;
 - duplicate request retries are idempotent;
 - reused idempotency key with different payload is rejected;
-- CREATE_LOAN transaction cannot leave one genesis event without the other;
-- repayment cannot overdraw outstanding principal;
-- two concurrent accept calls produce one event set;
-- event history over one CloudBase page reconstructs correctly;
-- rate before/after multiple RATE_CHANGE events reconstructs correctly;
-- initial rate always exists for a newly created v2 Loan;
+- CREATE_LOAN cannot leave only one genesis event;
+- repayment cannot overdraw principal;
+- concurrent stale repayments cannot both make principal negative;
+- principal-add/rate-change require counterparty confirmation;
+- concurrent formal events receive unique sequences;
+- >1 CloudBase page event history reconstructs correctly;
+- same-effective-date rate events resolve by higher sequence in both display and calc;
+- initial rate always exists for every v2 Loan;
 - rejected/cancelled/expired requests never create events;
-- correction appends compensation without changing target event;
-- home receivable/payable views are opposite projections of the same Loan.
-
----
-
-## 24. Implementation warning
-
-Until the v2 migration is complete, the repository contains v1.1 code whose assumptions conflict with this model, including global UserRole, familyId, bootstrapAdmin, admin-only actions, direct PRINCIPAL_ADD writes, and family-oriented UI.
-
-Do not extend those patterns merely because they already exist. Treat them as migration targets unless a v2 design decision explicitly retains them.
+- principal Correction never edits target and cannot produce negative principal on any affected historical day;
+- rate Correction targets the winning same-day rate event and supersedes it by later sequence;
+- Correction may correct a prior same-kind Correction through an explicit target chain;
+- Close cannot apply while principal != 0;
+- Close cannot be future-dated in MVP;
+- Close cannot precede an already-applied formal event;
+- Close snapshots residual accrued interest;
+- Close atomically writes event + Loan CLOSED + request APPLIED;
+- post-close pending changes cannot apply;
+- CLOSED current projection is zero and no longer accrues interest;
+- historical pre-close projection remains reconstructable;
+- home receivable/payable views remain opposite projections of one shared Loan.
