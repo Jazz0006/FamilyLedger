@@ -7,7 +7,10 @@ import {
 import { MemoryRepo } from '../data/memory-repo.js';
 import { ErrorCode } from '../errors.js';
 import type { ActionContext } from './action-context.js';
-import { createKnownLoanRequest } from './createKnownLoanRequest.js';
+import {
+  acceptKnownLoanRequest,
+  createKnownLoanRequest,
+} from './createKnownLoanRequest.js';
 import { createLoanRequest } from './createLoanRequest.js';
 import { ensureUser } from './ensureUser.js';
 import {
@@ -17,7 +20,6 @@ import {
 } from './loanInvites.js';
 import { listKnownCounterparties } from './knownCounterparties.js';
 import {
-  acceptRequest,
   cancelRequest,
   rejectRequest,
 } from './repaymentActions.js';
@@ -168,12 +170,10 @@ describe('R12A UI-facing contract', () => {
     });
     expect(retry._id).toBe(request._id);
 
-    const result = await acceptRequest(ctx(repo, 'bob-openid', NOW + 10), {
+    const result = await acceptKnownLoanRequest(ctx(repo, 'bob-openid', NOW + 10), {
       requestId: request._id,
     });
     expect(result.request.status).toBe(LedgerRequestStatus.APPLIED);
-    expect('loan' in result).toBe(true);
-    if (!('loan' in result)) throw new Error('expected create-loan result');
 
     const history = await listLoanEvents(ctx(repo, 'alice-openid'), {
       loanId: result.loan._id,
@@ -187,11 +187,10 @@ describe('R12A UI-facing contract', () => {
     expect(history.items[0]!.amountFen).toBe(75_000);
     expect(history.items[1]!.rate?.annualEffectiveRate).toBe('0.04');
 
-    const acceptRetry = await acceptRequest(ctx(repo, 'bob-openid', NOW + 11), {
-      requestId: request._id,
-    });
-    expect('loan' in acceptRetry).toBe(true);
-    if (!('loan' in acceptRetry)) throw new Error('expected create-loan retry result');
+    const acceptRetry = await acceptKnownLoanRequest(
+      ctx(repo, 'bob-openid', NOW + 11),
+      { requestId: request._id },
+    );
     expect(acceptRetry.loan._id).toBe(result.loan._id);
   });
 
@@ -209,13 +208,12 @@ describe('R12A UI-facing contract', () => {
     });
 
     await expect(
-      acceptRequest(ctx(repo, 'alice-openid'), { requestId: request._id }),
+      acceptKnownLoanRequest(ctx(repo, 'alice-openid'), { requestId: request._id }),
     ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
 
-    const result = await acceptRequest(ctx(repo, 'bob-openid'), {
+    const result = await acceptKnownLoanRequest(ctx(repo, 'bob-openid'), {
       requestId: request._id,
     });
-    if (!('loan' in result)) throw new Error('expected create-loan result');
     expect(result.loan.borrowerUserId).not.toBe(bob._id);
     expect(result.loan.lenderUserId).toBe(bob._id);
   });
