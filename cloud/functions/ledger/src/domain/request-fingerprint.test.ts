@@ -169,10 +169,10 @@ describe('request fingerprint', () => {
     const extended = {
       ...a,
       payload: {
-        ...(a.payload as Record<string, unknown>),
+        ...(a.payload as unknown as Record<string, unknown>),
         uiDraftId: 'temporary-client-only-value',
       },
-    } as RequestFingerprintInput;
+    } as unknown as RequestFingerprintInput;
 
     expect(computeRequestFingerprint(extended)).toBe(computeRequestFingerprint(a));
   });
