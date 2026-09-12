@@ -1,117 +1,63 @@
 # Cloud functions (Tencent CloudBase)
 
-Server-side authority for FamilyLedger. The frontend never writes to the
-ledger directly (spec §14–§15).
+This directory is the server-authoritative boundary for the v2 bilateral ledger.
 
-## Layout
+## Current rewrite status
 
-- `functions/ledger` — a single router function. The miniprogram calls it with
-  `{ action, payload }`. Actions live in `functions/ledger/src/actions/`.
+The v1.1 family/admin action layer and repository implementation were intentionally removed in **R1 — Clean v2 Domain Rewrite**. They are not compatibility targets.
 
-## Collections (create in the CloudBase console)
+During R1 the `ledger` entry point is deliberately disabled and returns `INVALID_STATE` for product actions. Do not deploy this branch as a usable ledger backend until the later v2 server milestones restore real actions.
 
-`users`, `loan_accounts`, `loan_terms`, `change_requests`, `loan_events`,
-`invite_tokens`, `audit_logs` (see spec §16 and
-`packages/shared/src/collections.ts`).
+The next server milestones will rebuild the backend against the v2 domain model:
 
-**Required indexes (enforce invariants at the DB layer):**
+1. R2 — request state machine, permissions, idempotency fingerprint;
+2. R3 — v2 repository contract, MemoryRepo, CloudBaseRepo, pagination and transaction primitives;
+3. R4 — `ensureUser`;
+4. R5 — `CREATE_LOAN` invite/accept/verify/apply closed loop.
 
-- `change_requests.idempotencyKey` — **unique**. Blocks duplicate proposals
-  from double-tap / retry (spec §15).
-- `loan_events.sourceRequestId` — **unique** (sparse). Guarantees a confirmed
-  request can produce at most one ledger event even if apply is retried.
-- `invite_tokens.tokenHash` — unique.
-- `users.openid` — unique (one WeChat identity ↔ one account, spec §4).
+## Target collections
 
-**Security rules:** deny all client-side writes to `loan_events`, `audit_logs`,
-`change_requests`, `loan_terms`, `invite_tokens`. All writes go through the
-`ledger` function. Reads should also be funnelled through the function so the
-family-vs-private visibility rules (spec §6) are enforced server-side rather
-than via permissive collection read rules.
+The v2 target collections are:
 
-## First-time setup (things only YOU can do)
+- `users`
+- `loans`
+- `ledger_requests`
+- `loan_events`
+- `invite_tokens`
+- `audit_logs`
+- optional future `rate_references`
 
-These need your WeChat/Tencent account, real-name verification, and console
-clicks — they can't be scripted from here.
+Do **not** recreate the legacy `loan_accounts`, `loan_terms`, or `change_requests` schema for v2.
 
-1. **Activate Cloud Development.** Open the project in WeChat DevTools (AppID
-   `wxa6b778821b3ccbc9` is already set), click **云开发 / Cloud** in the toolbar,
-   and create an environment. Note the **env ID**.
-2. **Real-name verification (实名认证).** Tencent requires this on the account
-   before the env is usable. The miniprogram cloud tier has a free quota.
-3. **Put the env ID in `cloudbaserc.json`** (repo root) — replace
-   `REPLACE_WITH_YOUR_ENV_ID`. Also set it in `miniprogram/app.js` (or keep
-   `DYNAMIC_CURRENT_ENV` if the miniprogram and env are 1:1).
-4. **Create the 7 collections** (console → 数据库): `users`, `loan_accounts`,
-   `loan_terms`, `change_requests`, `loan_events`, `invite_tokens`,
-   `audit_logs`.
-5. **Create the unique indexes** below. These are NOT optional — our
-   idempotency and single-use guarantees are enforced by the DB, not just code.
-6. **Set every collection to deny client writes** (权限设置 → 仅管理端可读写,
-   or a custom rule denying client writes). All access goes through the
-   `ledger` function.
+Required indexes and transaction semantics are authoritative in `docs/DATA_MODEL_V2.md`. In particular, v2 `loan_events.sourceRequestId` is not globally unique because one `CREATE_LOAN` request creates both initial principal and initial rate events.
 
-### Required indexes
+## Security boundary
 
-| Collection | Field | Type |
-|---|---|---|
-| `users` | `openid` | **unique** |
-| `loan_events` | `idempotencyKey` | **unique** |
-| `loan_events` | `sourceRequestId` | **unique, sparse** (repayment apply) |
-| `invite_tokens` | `tokenHash` | **unique** |
-| `change_requests` | `idempotencyKey` | **unique** (when repayment lands) |
+- Runtime OPENID is authoritative identity.
+- Client-supplied user IDs never prove identity.
+- Clients do not directly mutate formal ledger collections.
+- Applying a request and creating its formal events must be atomic or transactionally equivalent.
+- Reads that can grow beyond a CloudBase page must paginate.
+- Formal `loan_events` are append-only through product APIs.
 
-If an index is missing, concurrent double-taps could slip past the code-level
-guard. Create them before real use.
+## Reusable infrastructure
 
-## Build & deploy
+The rewrite intentionally keeps infrastructure that is independent of the old product model:
+
+- `src/context.ts` — CloudBase runtime context;
+- `src/crypto.ts` — token hashing/random helpers;
+- `src/errors.ts` — v2 application error envelope;
+- `scripts/bundle.mjs` — deployment bundle plumbing.
+
+## Build
+
+From the repository root:
 
 ```bash
-# from repo root
-npm run build                              # typecheck shared -> calc -> cloud
-npm run bundle -w @family-ledger/cloud-ledger   # -> dist-bundle/ (self-contained CJS)
+npm install
+npm run build
+npm test
+npm run bundle -w @family-ledger/cloud-ledger
 ```
 
-`npm run bundle` uses esbuild to inline the workspace packages
-(`@family-ledger/calc`, `@family-ledger/shared`, `decimal.js`) into a single
-`cloud/functions/ledger/dist-bundle/index.js` that exposes `exports.main`.
-`@cloudbase/node-sdk` is left external (the runtime provides it).
-
-Deploy that folder as the `ledger` function with the CloudBase CLI:
-
-```bash
-npm i -g @cloudbase/cli      # provides `tcb`
-tcb login
-tcb fn deploy ledger         # uses cloudbaserc.json
-```
-
-(Or deploy `dist-bundle/` via the WeChat DevTools cloud panel by pointing the
-`ledger` function at the bundled output.)
-
-## Bootstrapping the first admin
-
-Chicken-and-egg: invites are created by the admin, but the first admin has
-no one to invite them. Resolution (decided v1.1): **first-caller-claims**.
-
-1. After deploy, from YOUR phone, call the `bootstrapAdmin` action once
-   (`{ action: 'bootstrapAdmin', payload: { displayName: '曾骏' } }`).
-2. The first WeChat account to call it becomes the BORROWER/admin, bound to
-   your OPENID. The action then permanently refuses (any later caller gets
-   `CONFLICT`) — so it can't be used to seize admin afterwards.
-3. From then on, use `createInvite` to onboard 妈妈/爸爸/姐姐; each taps their
-   invite link once (`bindInvite`), which auto-creates their lender account and
-   loan.
-
-## Confirmation model (spec v1.1, Rule B)
-
-Direction-based: **debt-increasing ops are admin-only + immediate;
-debt-decreasing ops need lender confirmation.**
-
-- `recordLodgment` (PRINCIPAL_ADD) — admin-only, direct single event, no
-  confirmation, effective today.
-- `proposeRepayment` (PRINCIPAL_REPAY) — admin creates a PENDING request;
-  `confirmChange` applies it when the lender confirms, effective that day.
-- Rate changes (RATE_CHANGE) — admin-only, direct (impl TODO).
-
-The action files are still `NOT_IMPLEMENTED` stubs, but the flow and security
-boundary are now fixed by v1.1 — implement the money logic against them.
+The cloud package temporarily allows zero cloud tests during R1 because the old v1 tests were deleted with the old business layer. R2 must add the new state-machine/permission/idempotency tests before server behavior expands again.
