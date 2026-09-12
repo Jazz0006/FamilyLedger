@@ -23,3 +23,5 @@ jobs:
       - run: npm test
       - run: npm run bundle -w @family-ledger/cloud-ledger
       - run: npm run deployment:check -w @family-ledger/cloud-ledger
+      - run: npm run schema:plan -w @family-ledger/cloud-ledger -- --json
+      - run: node --check cloud/functions/ledger/scripts/cloudbase-smoke.mjs
