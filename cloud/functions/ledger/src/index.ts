@@ -20,6 +20,7 @@ import {
   listLoanEvents,
   listLoans,
   listPendingRequests,
+  listProposedRequests,
 } from './actions/readActions.js';
 import { listKnownCounterparties } from './actions/knownCounterparties.js';
 import {
@@ -77,6 +78,8 @@ export async function main(
         return ok(await listLoanEvents(ctx, event.payload));
       case 'listPendingRequests':
         return ok(await listPendingRequests(ctx, event.payload));
+      case 'listProposedRequests':
+        return ok(await listProposedRequests(ctx, event.payload));
       case 'listKnownCounterparties':
         return ok(await listKnownCounterparties(ctx, event.payload));
       case 'getHomeSummary':
