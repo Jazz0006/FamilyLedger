@@ -1,4 +1,4 @@
-// 家庭借款账本 — app shell.
+// 来往账 — WeChat Mini Program app shell.
 App({
   onLaunch() {
     if (!wx.cloud) {
@@ -6,8 +6,7 @@ App({
       return;
     }
     wx.cloud.init({
-      // TODO: replace with your CloudBase env id, or use DYNAMIC_CURRENT_ENV
-      // when the miniprogram and cloud env are bound 1:1.
+      // Use the CloudBase environment bound to this Mini Program.
       env: wx.cloud.DYNAMIC_CURRENT_ENV,
       traceUser: true,
     });
