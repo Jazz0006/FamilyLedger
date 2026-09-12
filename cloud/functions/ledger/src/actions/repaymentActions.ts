@@ -6,10 +6,11 @@ import {
   LoanStatus,
   type LedgerRequest,
   type LoanEvent,
+  type PrincipalAddPayload,
   type PrincipalRepayPayload,
+  type RateChangePayload,
 } from '@family-ledger/shared';
 import { computeBalance, toInterestInput } from '@family-ledger/calc';
-import { computeRequestFingerprint } from '../domain/request-fingerprint.js';
 import {
   assertCanCancelRequest,
   assertCanRespondToKnownCounterpartyRequest,
@@ -18,14 +19,29 @@ import {
 } from '../domain/permissions.js';
 import { assertLedgerRequestTransition } from '../domain/request-state.js';
 import { AppError, ErrorCode } from '../errors.js';
-import { eventIdempotencyKey } from '../data/event-idempotency.js';
-import type { LedgerTransaction, NewLedgerRequest } from '../data/repo.js';
+import {
+  eventIdempotencyKey,
+  type EventPurpose,
+} from '../data/event-idempotency.js';
+import type {
+  LedgerTransaction,
+  NewLoanEvent,
+} from '../data/repo.js';
 import type { ActionContext } from './action-context.js';
 import { requireCurrentUser } from './action-context.js';
-import { assertIsoDate } from './create-loan-common.js';
+import {
+  createKnownLoanChangeRequest,
+  normalizeIdempotencyKey,
+  normalizeLoanId,
+  normalizeNote,
+  normalizePositiveFen,
+  requireObject,
+} from './known-change-common.js';
+import {
+  assertIsoDate,
+  normalizeRateSnapshot,
+} from './create-loan-common.js';
 
-const MAX_NOTE_LENGTH = 500;
-const MAX_IDEMPOTENCY_KEY_LENGTH = 128;
 const TX_EVENT_PAGE_SIZE = 100;
 
 interface RepaymentRequestInput {
@@ -40,20 +56,13 @@ interface RequestIdInput {
   requestId: string;
 }
 
-export interface AppliedRepaymentResult {
+export interface AppliedLoanChangeResult {
   request: LedgerRequest;
   event: LoanEvent;
 }
 
 function validation(message: string): never {
   throw new AppError(ErrorCode.VALIDATION_ERROR, message);
-}
-
-function requireObject(value: unknown, label: string): Record<string, unknown> {
-  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
-    validation(`${label} must be an object`);
-  }
-  return value as Record<string, unknown>;
 }
 
 function normalizeRequestIdInput(input: unknown): RequestIdInput {
@@ -66,68 +75,59 @@ function normalizeRequestIdInput(input: unknown): RequestIdInput {
 
 function normalizeRepaymentRequestInput(input: unknown): RepaymentRequestInput {
   const raw = requireObject(input, 'createRepaymentRequest payload');
-  if (typeof raw.loanId !== 'string' || raw.loanId.trim().length === 0) {
-    validation('loanId must be a non-empty string');
-  }
-  if (!Number.isSafeInteger(raw.amountFen) || Number(raw.amountFen) <= 0) {
-    validation('amountFen must be a positive safe integer Fen value');
-  }
-
-  let note: string | null = null;
-  if (raw.note !== undefined && raw.note !== null) {
-    if (typeof raw.note !== 'string') validation('note must be a string or null');
-    const trimmed = raw.note.trim();
-    if (trimmed.length > MAX_NOTE_LENGTH) {
-      validation(`note must be at most ${MAX_NOTE_LENGTH} characters`);
-    }
-    note = trimmed.length > 0 ? trimmed : null;
-  }
-
-  if (typeof raw.idempotencyKey !== 'string') {
-    validation('idempotencyKey must be a string');
-  }
-  const idempotencyKey = raw.idempotencyKey.trim();
-  if (
-    idempotencyKey.length === 0 ||
-    idempotencyKey.length > MAX_IDEMPOTENCY_KEY_LENGTH
-  ) {
-    validation(
-      `idempotencyKey must contain 1-${MAX_IDEMPOTENCY_KEY_LENGTH} characters`,
-    );
-  }
-
   return {
-    loanId: raw.loanId.trim(),
-    amountFen: raw.amountFen as number,
+    loanId: normalizeLoanId(raw.loanId),
+    amountFen: normalizePositiveFen(raw.amountFen),
     proposedEffectiveDate: assertIsoDate(raw.proposedEffectiveDate),
-    note,
-    idempotencyKey,
+    note: normalizeNote(raw.note),
+    idempotencyKey: normalizeIdempotencyKey(raw.idempotencyKey),
   };
 }
 
-function assertRepaymentRequest(
+function isSupportedKnownChangeType(type: string): boolean {
+  return (
+    type === LedgerRequestType.PRINCIPAL_REPAY ||
+    type === LedgerRequestType.PRINCIPAL_ADD ||
+    type === LedgerRequestType.RATE_CHANGE
+  );
+}
+
+function assertSupportedKnownChangeRequest(
   request: LedgerRequest,
-): asserts request is LedgerRequest & { payload: PrincipalRepayPayload; loanId: string } {
-  if (request.type !== LedgerRequestType.PRINCIPAL_REPAY) {
+): asserts request is LedgerRequest & { loanId: string } {
+  if (!isSupportedKnownChangeType(request.type)) {
     throw new AppError(
       ErrorCode.INVALID_STATE,
-      'This R7 action only supports PRINCIPAL_REPAY requests',
+      'Request type is not implemented by the known-counterparty change workflow',
     );
   }
   if (request.requiresInitiatorVerify) {
     throw new AppError(
       ErrorCode.INVALID_STATE,
-      'Repayment request must use the known-counterparty workflow',
+      'Known Loan changes must not use initiator verification',
     );
   }
   if (request.loanId == null) {
-    throw new AppError(ErrorCode.INVALID_STATE, 'Repayment request has no Loan');
+    throw new AppError(ErrorCode.INVALID_STATE, 'Loan change request has no Loan');
   }
-  const payload = request.payload as PrincipalRepayPayload;
-  if (!Number.isSafeInteger(payload.amountFen) || payload.amountFen <= 0) {
-    throw new AppError(ErrorCode.INVALID_STATE, 'Repayment request has invalid amountFen');
+
+  switch (request.type) {
+    case LedgerRequestType.PRINCIPAL_REPAY:
+    case LedgerRequestType.PRINCIPAL_ADD: {
+      const payload = request.payload as PrincipalRepayPayload | PrincipalAddPayload;
+      if (!Number.isSafeInteger(payload.amountFen) || payload.amountFen <= 0) {
+        throw new AppError(ErrorCode.INVALID_STATE, 'Loan change has invalid amountFen');
+      }
+      assertIsoDate(payload.proposedEffectiveDate);
+      return;
+    }
+    case LedgerRequestType.RATE_CHANGE: {
+      const payload = request.payload as RateChangePayload;
+      normalizeRateSnapshot(payload.rate);
+      assertIsoDate(payload.proposedEffectiveDate);
+      return;
+    }
   }
-  assertIsoDate(payload.proposedEffectiveDate);
 }
 
 async function readAllTransactionEvents(
@@ -147,12 +147,97 @@ async function readAllTransactionEvents(
   return events;
 }
 
-function findAppliedRepaymentEvent(
+function purposeForRequest(request: LedgerRequest): EventPurpose {
+  switch (request.type) {
+    case LedgerRequestType.PRINCIPAL_REPAY:
+      return 'principal-repay';
+    case LedgerRequestType.PRINCIPAL_ADD:
+      return 'principal-add';
+    case LedgerRequestType.RATE_CHANGE:
+      return 'rate-change';
+    default:
+      throw new AppError(ErrorCode.INVALID_STATE, 'Unsupported Loan change request type');
+  }
+}
+
+function findAppliedEvent(
   events: LoanEvent[],
-  requestId: string,
+  request: LedgerRequest,
 ): LoanEvent | null {
-  const key = eventIdempotencyKey(requestId, 'principal-repay');
+  const key = eventIdempotencyKey(request._id, purposeForRequest(request));
   return events.find((event) => event.idempotencyKey === key) ?? null;
+}
+
+function buildFormalEvent(params: {
+  request: LedgerRequest & { loanId: string };
+  actorUserId: string;
+  sequence: number;
+  now: number;
+  currentEvents: LoanEvent[];
+}): NewLoanEvent {
+  const base = {
+    loanId: params.request.loanId,
+    sourceRequestId: params.request._id,
+    createdBy: params.request.proposerUserId,
+    confirmedBy: params.actorUserId,
+    sequence: params.sequence,
+    createdAt: params.now,
+    schemaVersion: LOAN_EVENT_SCHEMA_VERSION,
+  } as const;
+
+  switch (params.request.type) {
+    case LedgerRequestType.PRINCIPAL_REPAY: {
+      const payload = params.request.payload as PrincipalRepayPayload;
+      const principalFen = computeBalance(
+        toInterestInput(params.currentEvents, payload.proposedEffectiveDate),
+      ).principalFen;
+      if (payload.amountFen > principalFen) {
+        throw new AppError(
+          ErrorCode.CONFLICT,
+          `Repayment ${payload.amountFen} exceeds current principal ${principalFen}`,
+        );
+      }
+      return {
+        ...base,
+        eventType: LoanEventType.PRINCIPAL_REPAY,
+        amountFen: payload.amountFen,
+        effectiveDate: payload.proposedEffectiveDate,
+        idempotencyKey: eventIdempotencyKey(
+          params.request._id,
+          'principal-repay',
+        ),
+      };
+    }
+    case LedgerRequestType.PRINCIPAL_ADD: {
+      const payload = params.request.payload as PrincipalAddPayload;
+      return {
+        ...base,
+        eventType: LoanEventType.PRINCIPAL_ADD,
+        amountFen: payload.amountFen,
+        effectiveDate: payload.proposedEffectiveDate,
+        idempotencyKey: eventIdempotencyKey(
+          params.request._id,
+          'principal-add',
+        ),
+      };
+    }
+    case LedgerRequestType.RATE_CHANGE: {
+      const payload = params.request.payload as RateChangePayload;
+      return {
+        ...base,
+        eventType: LoanEventType.RATE_CHANGE,
+        amountFen: null,
+        rate: normalizeRateSnapshot(payload.rate),
+        effectiveDate: payload.proposedEffectiveDate,
+        idempotencyKey: eventIdempotencyKey(
+          params.request._id,
+          'rate-change',
+        ),
+      };
+    }
+    default:
+      throw new AppError(ErrorCode.INVALID_STATE, 'Unsupported Loan change request type');
+  }
 }
 
 /** Any participant may propose that principal has been repaid; the other side confirms. */
@@ -160,75 +245,48 @@ export async function createRepaymentRequest(
   ctx: ActionContext,
   input: unknown,
 ): Promise<LedgerRequest> {
-  const actor = await requireCurrentUser(ctx);
   const normalized = normalizeRepaymentRequestInput(input);
-  const loan = await ctx.repo.getLoan(normalized.loanId);
-  if (!loan) throw new AppError(ErrorCode.NOT_FOUND, 'Loan not found');
-  assertLoanParticipant(loan, actor._id);
-  if (loan.status !== LoanStatus.ACTIVE) {
-    throw new AppError(ErrorCode.INVALID_STATE, 'Loan is not active');
-  }
-
-  const counterpartyUserId = getLoanCounterpartyUserId(loan, actor._id);
   const payload: PrincipalRepayPayload = {
     amountFen: normalized.amountFen,
     proposedEffectiveDate: normalized.proposedEffectiveDate,
     note: normalized.note,
   };
-  const requestFingerprint = computeRequestFingerprint({
+  return createKnownLoanChangeRequest(ctx, {
+    loanId: normalized.loanId,
     type: LedgerRequestType.PRINCIPAL_REPAY,
-    loanId: loan._id,
-    proposerUserId: actor._id,
-    counterpartyUserId,
     payload,
-    requiresInitiatorVerify: false,
-  });
-
-  const request: NewLedgerRequest = {
-    type: LedgerRequestType.PRINCIPAL_REPAY,
-    loanId: loan._id,
-    proposerUserId: actor._id,
-    counterpartyUserId,
-    payload,
-    status: LedgerRequestStatus.PENDING,
-    requiresInitiatorVerify: false,
     idempotencyKey: normalized.idempotencyKey,
-    requestFingerprint,
-    createdAt: ctx.now,
-    updatedAt: ctx.now,
-    resolvedAt: null,
-    expiresAt: null,
-  };
-  return (await ctx.repo.createRequestIdempotent(request)).item;
+  });
 }
 
 /**
- * Confirm a repayment inside one transaction snapshot. The current principal is
- * rebuilt from the formal event stream before append, so stale/concurrent
- * proposals cannot drive principal below zero.
+ * Confirm an implemented known-counterparty Loan change in one transaction.
+ * Repayment additionally rebuilds principal from the same transaction snapshot.
  */
 export async function acceptRequest(
   ctx: ActionContext,
   input: unknown,
-): Promise<AppliedRepaymentResult> {
+): Promise<AppliedLoanChangeResult> {
   const actor = await requireCurrentUser(ctx);
   const { requestId } = normalizeRequestIdInput(input);
 
   return ctx.repo.runTransaction(async (tx) => {
     const request = await tx.getRequest(requestId);
     if (!request) throw new AppError(ErrorCode.NOT_FOUND, 'LedgerRequest not found');
-    assertRepaymentRequest(request);
+    assertSupportedKnownChangeRequest(request);
 
     if (request.status === LedgerRequestStatus.APPLIED) {
       if (actor._id !== request.counterpartyUserId) {
         throw new AppError(ErrorCode.FORBIDDEN, 'Only the counterparty may accept this request');
       }
-      const events = await readAllTransactionEvents(tx, request.loanId);
-      const event = findAppliedRepaymentEvent(events, request._id);
+      const event = findAppliedEvent(
+        await readAllTransactionEvents(tx, request.loanId),
+        request,
+      );
       if (!event) {
         throw new AppError(
           ErrorCode.INVALID_STATE,
-          'Applied repayment request is missing its formal event',
+          'Applied Loan change request is missing its formal event',
         );
       }
       return { request, event };
@@ -252,33 +310,24 @@ export async function acceptRequest(
       );
     }
 
-    const events = await readAllTransactionEvents(tx, loan._id);
-    const principalFen = computeBalance(
-      toInterestInput(events, request.payload.proposedEffectiveDate),
-    ).principalFen;
-    if (request.payload.amountFen > principalFen) {
-      throw new AppError(
-        ErrorCode.CONFLICT,
-        `Repayment ${request.payload.amountFen} exceeds current principal ${principalFen}`,
-      );
-    }
-
+    const currentEvents =
+      request.type === LedgerRequestType.PRINCIPAL_REPAY
+        ? await readAllTransactionEvents(tx, loan._id)
+        : [];
     const [sequence] = await tx.allocateEventSequences(loan._id, 1);
-    if (sequence == null) throw new AppError(ErrorCode.INTERNAL, 'No event sequence allocated');
+    if (sequence == null) {
+      throw new AppError(ErrorCode.INTERNAL, 'No event sequence allocated');
+    }
     const event = (
-      await tx.appendEventIdempotent({
-        loanId: loan._id,
-        eventType: LoanEventType.PRINCIPAL_REPAY,
-        amountFen: request.payload.amountFen,
-        effectiveDate: request.payload.proposedEffectiveDate,
-        sourceRequestId: request._id,
-        createdBy: request.proposerUserId,
-        confirmedBy: actor._id,
-        sequence,
-        idempotencyKey: eventIdempotencyKey(request._id, 'principal-repay'),
-        createdAt: ctx.now,
-        schemaVersion: LOAN_EVENT_SCHEMA_VERSION,
-      })
+      await tx.appendEventIdempotent(
+        buildFormalEvent({
+          request,
+          actorUserId: actor._id,
+          sequence,
+          now: ctx.now,
+          currentEvents,
+        }),
+      )
     ).item;
 
     assertLedgerRequestTransition(request, LedgerRequestStatus.APPLIED);
@@ -302,7 +351,7 @@ export async function rejectRequest(
   return ctx.repo.runTransaction(async (tx) => {
     const request = await tx.getRequest(requestId);
     if (!request) throw new AppError(ErrorCode.NOT_FOUND, 'LedgerRequest not found');
-    assertRepaymentRequest(request);
+    assertSupportedKnownChangeRequest(request);
     if (request.status === LedgerRequestStatus.REJECTED) {
       if (actor._id !== request.counterpartyUserId) {
         throw new AppError(ErrorCode.FORBIDDEN, 'Only the counterparty may reject this request');
@@ -331,7 +380,7 @@ export async function cancelRequest(
   return ctx.repo.runTransaction(async (tx) => {
     const request = await tx.getRequest(requestId);
     if (!request) throw new AppError(ErrorCode.NOT_FOUND, 'LedgerRequest not found');
-    assertRepaymentRequest(request);
+    assertSupportedKnownChangeRequest(request);
     if (request.status === LedgerRequestStatus.CANCELLED) {
       if (actor._id !== request.proposerUserId) {
         throw new AppError(ErrorCode.FORBIDDEN, 'Only the proposer may cancel this request');

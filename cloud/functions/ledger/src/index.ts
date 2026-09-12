@@ -23,6 +23,10 @@ import {
   createRepaymentRequest,
   rejectRequest,
 } from './actions/repaymentActions.js';
+import {
+  createPrincipalAddRequest,
+  createRateChangeRequest,
+} from './actions/loanChangeRequests.js';
 
 type Event = {
   action?: string;
@@ -71,6 +75,10 @@ export async function main(
         return ok(await getHomeSummary(ctx, event.payload));
       case 'createRepaymentRequest':
         return ok(await createRepaymentRequest(ctx, event.payload));
+      case 'createPrincipalAddRequest':
+        return ok(await createPrincipalAddRequest(ctx, event.payload));
+      case 'createRateChangeRequest':
+        return ok(await createRateChangeRequest(ctx, event.payload));
       case 'acceptRequest':
         return ok(await acceptRequest(ctx, event.payload));
       case 'rejectRequest':

@@ -20,6 +20,12 @@ export interface PrincipalSegment {
 export interface RatePeriod {
   annualEffectiveRate: string;
   effectiveFrom: IsoDate;
+  /**
+   * Formal LoanEvent sequence when this period came from the ledger. When two
+   * confirmed rates share an effective date, the later sequence wins.
+   * Hand-authored calculator inputs may omit it; input order then breaks ties.
+   */
+  sequence?: number;
 }
 
 export interface InterestInput {
@@ -51,9 +57,17 @@ export function computeBalance(input: InterestInput): BalanceBreakdown {
     throw new Error('Missing confirmed rate history');
   }
 
-  const ratePeriods = [...input.ratePeriods].sort((a, b) =>
-    a.effectiveFrom < b.effectiveFrom ? -1 : a.effectiveFrom > b.effectiveFrom ? 1 : 0,
-  );
+  const ratePeriods = input.ratePeriods
+    .map((period, inputOrder) => ({
+      ...period,
+      tieBreakOrder: period.sequence ?? inputOrder,
+    }))
+    .sort((a, b) => {
+      if (a.effectiveFrom !== b.effectiveFrom) {
+        return a.effectiveFrom < b.effectiveFrom ? -1 : 1;
+      }
+      return a.tieBreakOrder - b.tieBreakOrder;
+    });
 
   const dailyByPeriod = ratePeriods.map((p) => ({
     from: p.effectiveFrom,

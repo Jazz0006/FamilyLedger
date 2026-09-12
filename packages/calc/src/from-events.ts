@@ -27,6 +27,7 @@ export function toInterestInput(events: LoanEvent[], asOf: string): InterestInpu
         ratePeriods.push({
           annualEffectiveRate: requireRate(e),
           effectiveFrom: e.effectiveDate,
+          sequence: e.sequence,
         });
         break;
       case LoanEventType.CORRECTION:
@@ -40,6 +41,7 @@ export function toInterestInput(events: LoanEvent[], asOf: string): InterestInpu
           ratePeriods.push({
             annualEffectiveRate: e.rate.annualEffectiveRate,
             effectiveFrom: e.effectiveDate,
+            sequence: e.sequence,
           });
         }
         break;
