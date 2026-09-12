@@ -17,6 +17,7 @@ import { assertLedgerRequestTransition } from '../domain/request-state.js';
 import type { ActionContext } from './action-context.js';
 import { requireCurrentUser } from './action-context.js';
 import { bindFirstContactCounterparty } from './create-loan-common.js';
+import { ensureUser } from './ensureUser.js';
 import { requireUserDisplayProfile } from './user-display.js';
 
 const RAW_TOKEN = /^[A-Za-z0-9_-]{43}$/;
