@@ -59,7 +59,7 @@ function requestTitle(request) {
   return names[request.type] || request.type;
 }
 
-function mapPending(entry, targetEvent) {
+function mapActionable(entry, targetEvent) {
   const request = entry.request;
   const verifying = request.status === 'PENDING_INITIATOR_VERIFY';
   return {
@@ -79,11 +79,25 @@ function mapPending(entry, targetEvent) {
   };
 }
 
-async function readAllPending() {
+function mapProposed(entry, targetEvent) {
+  const request = entry.request;
+  return {
+    id: request._id,
+    type: request.type,
+    title: requestTitle(request),
+    otherPartyName: entry.otherParty
+      ? entry.otherParty.displayName
+      : '新联系人（尚未接受邀请）',
+    description: requestDescription(request, targetEvent),
+    note: (request.payload && (request.payload.note || request.payload.reason)) || '',
+  };
+}
+
+async function readAll(action) {
   const items = [];
   let cursor = null;
   do {
-    const page = await callLedger('listPendingRequests', { limit: 100, cursor });
+    const page = await callLedger(action, { limit: 100, cursor });
     items.push(...(page.items || []));
     cursor = page.nextCursor || null;
   } while (cursor);
@@ -101,8 +115,7 @@ async function readAllEvents(loanId) {
   return events;
 }
 
-async function mapPendingWithCorrectionTargets(items) {
-  const eventCache = new Map();
+async function mapWithCorrectionTargets(items, mapper, eventCache) {
   const getEvents = async (loanId) => {
     if (!eventCache.has(loanId)) {
       eventCache.set(loanId, readAllEvents(loanId));
@@ -120,14 +133,20 @@ async function mapPendingWithCorrectionTargets(items) {
     ) {
       const events = await getEvents(request.loanId);
       const target = events.find((event) => event._id === request.payload.targetEventId);
-      return mapPending(entry, target || null);
+      return mapper(entry, target || null);
     }
-    return mapPending(entry, null);
+    return mapper(entry, null);
   }));
 }
 
 Page({
-  data: { loading: true, error: '', requests: [], actingId: '' },
+  data: {
+    loading: true,
+    error: '',
+    requests: [],
+    sentRequests: [],
+    actingId: '',
+  },
 
   onShow() {
     this.load();
@@ -136,9 +155,21 @@ Page({
   async load() {
     this.setData({ loading: true, error: '' });
     try {
-      const items = await readAllPending();
-      const requests = await mapPendingWithCorrectionTargets(items);
-      this.setData({ loading: false, requests, actingId: '' });
+      const [actionable, proposed] = await Promise.all([
+        readAll('listPendingRequests'),
+        readAll('listProposedRequests'),
+      ]);
+      const eventCache = new Map();
+      const [requests, sentRequests] = await Promise.all([
+        mapWithCorrectionTargets(actionable, mapActionable, eventCache),
+        mapWithCorrectionTargets(proposed, mapProposed, eventCache),
+      ]);
+      this.setData({
+        loading: false,
+        requests,
+        sentRequests,
+        actingId: '',
+      });
     } catch (err) {
       this.setData({ loading: false, error: err.message || '加载失败', actingId: '' });
     }
