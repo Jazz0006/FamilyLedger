@@ -1,12 +1,42 @@
-<view wx:if="{{loading}}" class="card"><text class="label">加载中…</text></view>
-<view wx:elif="{{error}}" class="card"><text>{{error}}</text></view>
-<block wx:else>
-  <view wx:for="{{requests}}" wx:key="_id" class="card">
-    <text class="label">待确认</text>
-    <view class="amount-hero">{{item.amount}}</view>
-    <text>{{item.type}} · 生效日 {{item.proposedEffectiveDate}}</text>
-    <button class="btn-primary" data-id="{{item._id}}" data-approve="true" bindtap="decide">{{item.confirmLabel}}</button>
-    <button class="btn-secondary" data-id="{{item._id}}" data-approve="false" bindtap="decide">不同意</button>
+<view class="page">
+  <view wx:if="{{loading}}" class="card"><text class="muted">加载中…</text></view>
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+
+  <view wx:if="{{!loading && requests.length === 0}}" class="card empty">当前没有待你处理的事项</view>
+
+  <view wx:for="{{requests}}" wx:key="id" class="card">
+    <view class="row">
+      <view>
+        <view class="section-title">{{item.title}}</view>
+        <text class="muted">对方：{{item.otherPartyName}}</text>
+      </view>
+    </view>
+    <view class="request-detail">{{item.description}}</view>
+    <text wx:if="{{item.note}}" class="muted">备注：{{item.note}}</text>
+
+    <button
+      class="btn-primary"
+      data-id="{{item.id}}"
+      data-kind="{{item.actionKind}}"
+      loading="{{actingId === item.id}}"
+      disabled="{{actingId !== ''}}"
+      bindtap="accept"
+    >{{item.actionKind === 'VERIFY' ? '确认是这位对方' : '确认并记入账本'}}</button>
+
+    <button
+      wx:if="{{item.canReject}}"
+      class="btn-danger"
+      data-id="{{item.id}}"
+      disabled="{{actingId !== ''}}"
+      bindtap="reject"
+    >拒绝这项变更</button>
+
+    <button
+      wx:if="{{item.canCancel}}"
+      class="btn-danger"
+      data-id="{{item.id}}"
+      disabled="{{actingId !== ''}}"
+      bindtap="cancel"
+    >不是这位对方，取消本次邀请</button>
   </view>
-  <view wx:if="{{requests.length === 0}}" class="card"><text class="label">暂无待确认操作</text></view>
-</block>
+</view>
