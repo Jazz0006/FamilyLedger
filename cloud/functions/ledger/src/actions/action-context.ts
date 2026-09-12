@@ -1,3 +1,5 @@
+import type { User } from '@family-ledger/shared';
+import { AppError, ErrorCode } from '../errors.js';
 import type { LedgerRepo } from '../data/repo.js';
 
 /**
@@ -14,4 +16,16 @@ export interface ActionContext {
 
 export function makeActionContext(params: ActionContext): ActionContext {
   return params;
+}
+
+/** Resolve an already-created v2 User from trusted runtime OPENID. */
+export async function requireCurrentUser(ctx: ActionContext): Promise<User> {
+  const user = await ctx.repo.getUserByOpenid(ctx.openid);
+  if (!user) {
+    throw new AppError(
+      ErrorCode.UNAUTHENTICATED,
+      'No v2 User exists for the authenticated WeChat identity',
+    );
+  }
+  return user;
 }
