@@ -4,8 +4,10 @@ import {
   LedgerRequestType,
   LoanEventType,
   LoanStatus,
+  type CloseLoanPayload,
   type CorrectionPayload,
   type LedgerRequest,
+  type Loan,
   type LoanEvent,
   type PrincipalAddPayload,
   type PrincipalRepayPayload,
@@ -19,6 +21,7 @@ import {
   getLoanCounterpartyUserId,
 } from '../domain/permissions.js';
 import { assertLedgerRequestTransition } from '../domain/request-state.js';
+import { assertPrincipalTimelineNonNegative } from '../domain/principal-timeline.js';
 import { AppError, ErrorCode } from '../errors.js';
 import {
   eventIdempotencyKey,
@@ -46,6 +49,10 @@ import {
   buildCorrectionFormalEvent,
   correctionPayloadForStoredRequest,
 } from './correctionActions.js';
+import {
+  buildCloseFormalEvent,
+  closePayloadForStoredRequest,
+} from './closeLoanActions.js';
 
 const TX_EVENT_PAGE_SIZE = 100;
 
@@ -94,7 +101,8 @@ function isSupportedKnownChangeType(type: string): boolean {
     type === LedgerRequestType.PRINCIPAL_REPAY ||
     type === LedgerRequestType.PRINCIPAL_ADD ||
     type === LedgerRequestType.RATE_CHANGE ||
-    type === LedgerRequestType.CORRECTION
+    type === LedgerRequestType.CORRECTION ||
+    type === LedgerRequestType.CLOSE_LOAN
   );
 }
 
@@ -136,6 +144,9 @@ function assertSupportedKnownChangeRequest(
     case LedgerRequestType.CORRECTION:
       correctionPayloadForStoredRequest(request);
       return;
+    case LedgerRequestType.CLOSE_LOAN:
+      closePayloadForStoredRequest(request);
+      return;
   }
 }
 
@@ -166,6 +177,8 @@ function purposeForRequest(request: LedgerRequest): EventPurpose {
       return 'rate-change';
     case LedgerRequestType.CORRECTION:
       return 'correction';
+    case LedgerRequestType.CLOSE_LOAN:
+      return 'loan-close';
     default:
       throw new AppError(ErrorCode.INVALID_STATE, 'Unsupported Loan change request type');
   }
@@ -181,6 +194,7 @@ function findAppliedEvent(
 
 function buildFormalEvent(params: {
   request: LedgerRequest & { loanId: string };
+  loan: Loan;
   actorUserId: string;
   sequence: number;
   now: number;
@@ -208,7 +222,7 @@ function buildFormalEvent(params: {
           `Repayment ${payload.amountFen} exceeds current principal ${principalFen}`,
         );
       }
-      return {
+      const candidate: NewLoanEvent = {
         ...base,
         eventType: LoanEventType.PRINCIPAL_REPAY,
         amountFen: payload.amountFen,
@@ -218,6 +232,8 @@ function buildFormalEvent(params: {
           'principal-repay',
         ),
       };
+      assertPrincipalTimelineNonNegative(params.currentEvents, candidate);
+      return candidate;
     }
     case LedgerRequestType.PRINCIPAL_ADD: {
       const payload = params.request.payload as PrincipalAddPayload;
@@ -252,6 +268,18 @@ function buildFormalEvent(params: {
           loanId: string;
           payload: CorrectionPayload;
         },
+        actorUserId: params.actorUserId,
+        sequence: params.sequence,
+        now: params.now,
+        currentEvents: params.currentEvents,
+      });
+    case LedgerRequestType.CLOSE_LOAN:
+      return buildCloseFormalEvent({
+        request: params.request as LedgerRequest & {
+          loanId: string;
+          payload: CloseLoanPayload;
+        },
+        loan: params.loan,
         actorUserId: params.actorUserId,
         sequence: params.sequence,
         now: params.now,
@@ -335,7 +363,8 @@ export async function acceptRequest(
 
     const needsFullHistory =
       request.type === LedgerRequestType.PRINCIPAL_REPAY ||
-      request.type === LedgerRequestType.CORRECTION;
+      request.type === LedgerRequestType.CORRECTION ||
+      request.type === LedgerRequestType.CLOSE_LOAN;
     const currentEvents = needsFullHistory
       ? await readAllTransactionEvents(tx, loan._id)
       : [];
@@ -347,6 +376,7 @@ export async function acceptRequest(
       await tx.appendEventIdempotent(
         buildFormalEvent({
           request,
+          loan,
           actorUserId: actor._id,
           sequence,
           now: ctx.now,
@@ -354,6 +384,14 @@ export async function acceptRequest(
         }),
       )
     ).item;
+
+    if (request.type === LedgerRequestType.CLOSE_LOAN) {
+      await tx.putLoan({
+        ...loan,
+        status: LoanStatus.CLOSED,
+        closedAt: ctx.now,
+      });
+    }
 
     assertLedgerRequestTransition(request, LedgerRequestStatus.APPLIED);
     const applied: LedgerRequest = {

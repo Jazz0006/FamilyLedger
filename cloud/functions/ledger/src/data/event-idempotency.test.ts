@@ -24,6 +24,23 @@ function sample(): NewLoanEvent {
   };
 }
 
+function closeSample(accruedInterestFen: number): NewLoanEvent {
+  return {
+    loanId: 'loan-1',
+    eventType: LoanEventType.LOAN_CLOSED,
+    amountFen: null,
+    closeSettlement: { accruedInterestFen },
+    effectiveDate: '2027-01-01',
+    sourceRequestId: 'request-close',
+    createdBy: 'u1',
+    confirmedBy: 'u2',
+    sequence: 9,
+    idempotencyKey: 'request-close:loan-close',
+    createdAt: 2,
+    schemaVersion: 2,
+  };
+}
+
 describe('formal event idempotency', () => {
   it('derives deterministic keys from request and event purpose', () => {
     expect(eventIdempotencyKey('request-1', 'initial-principal')).toBe(
@@ -31,6 +48,9 @@ describe('formal event idempotency', () => {
     );
     expect(eventIdempotencyKey('request-1', 'initial-rate')).toBe(
       'request-1:initial-rate',
+    );
+    expect(eventIdempotencyKey('request-close', 'loan-close')).toBe(
+      'request-close:loan-close',
     );
   });
 
@@ -57,5 +77,13 @@ describe('formal event idempotency', () => {
       expect(error).toBeInstanceOf(AppError);
       expect((error as AppError).code).toBe(ErrorCode.CONFLICT);
     }
+  });
+
+  it('treats a changed close settlement snapshot as different event content', () => {
+    expect(sameEventMutation(closeSample(5_000), closeSample(5_000))).toBe(true);
+    expect(sameEventMutation(closeSample(5_000), closeSample(5_001))).toBe(false);
+    expect(() =>
+      assertSameEventMutation(closeSample(5_000), closeSample(5_001)),
+    ).toThrow(AppError);
   });
 });

@@ -38,6 +38,9 @@ function normalizeEvent(event: NewLoanEvent): object {
         }
       : null,
     targetEventId: event.targetEventId ?? null,
+    closeSettlement: event.closeSettlement
+      ? { accruedInterestFen: event.closeSettlement.accruedInterestFen }
+      : null,
     effectiveDate: event.effectiveDate,
     sourceRequestId: event.sourceRequestId,
     createdBy: event.createdBy,

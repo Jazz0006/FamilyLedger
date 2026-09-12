@@ -130,6 +130,11 @@ export interface LedgerRequest {
   expiresAt: EpochMillis | null;
 }
 
+export interface CloseSettlementSnapshot {
+  /** Accrued interest immediately before the mutually agreed settlement boundary. */
+  accruedInterestFen: Fen;
+}
+
 export interface LoanEvent {
   _id: EventId;
   loanId: LoanId;
@@ -137,6 +142,7 @@ export interface LoanEvent {
   amountFen: Fen | null;
   rate?: RateSnapshot;
   targetEventId?: EventId | null;
+  closeSettlement?: CloseSettlementSnapshot;
   effectiveDate: IsoDate;
   sourceRequestId: RequestId;
   createdBy: UserId;
@@ -192,10 +198,13 @@ export interface LoanSummary {
   loanId: LoanId;
   lenderUserId: UserId;
   borrowerUserId: UserId;
+  status: LoanStatus;
   principalFen: Fen;
   interestFen: Fen;
   totalFen: Fen;
   todayInterestFen: Fen;
   currentRate: RateSnapshot;
   asOfDate: IsoDate;
+  closeEffectiveDate: IsoDate | null;
+  settledInterestFen: Fen | null;
 }

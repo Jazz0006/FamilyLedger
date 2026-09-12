@@ -109,11 +109,7 @@ function compareRateEvents(a: LoanEvent, b: LoanEvent): number {
   return a.sequence - b.sequence;
 }
 
-/**
- * Preserve full agreed RateSnapshot metadata for display. The calc engine only
- * needs the numeric annual rate, so current-rate metadata is projected directly
- * from formal RATE_CHANGE/CORRECTION events.
- */
+/** Preserve the full agreed RateSnapshot metadata for display. */
 export function currentRateSnapshot(
   events: LoanEvent[],
   asOfDate: string,
@@ -137,8 +133,7 @@ export function currentRateSnapshot(
   const effective = rateEvents.filter(
     (event) => event.effectiveDate <= asOfDate,
   );
-  const chosen =
-    effective[effective.length - 1] ?? rateEvents[0];
+  const chosen = effective[effective.length - 1] ?? rateEvents[0];
 
   if (!chosen?.rate) {
     throw new AppError(ErrorCode.INVALID_STATE, 'Loan rate projection failed');
@@ -146,11 +141,74 @@ export function currentRateSnapshot(
   return chosen.rate;
 }
 
+function closeEventForLoan(loan: Loan, events: LoanEvent[]): LoanEvent | null {
+  const closeEvents = events.filter(
+    (event) => event.eventType === LoanEventType.LOAN_CLOSED,
+  );
+
+  if (loan.status === LoanStatus.ACTIVE) {
+    if (loan.closedAt != null || closeEvents.length > 0) {
+      throw new AppError(
+        ErrorCode.INVALID_STATE,
+        'ACTIVE Loan contains closed lifecycle state',
+      );
+    }
+    return null;
+  }
+
+  if (loan.status !== LoanStatus.CLOSED) {
+    throw new AppError(ErrorCode.INVALID_STATE, 'Loan has unknown lifecycle status');
+  }
+  if (loan.closedAt == null) {
+    throw new AppError(ErrorCode.INVALID_STATE, 'CLOSED Loan is missing closedAt');
+  }
+  if (closeEvents.length !== 1) {
+    throw new AppError(
+      ErrorCode.INVALID_STATE,
+      'CLOSED Loan must contain exactly one LOAN_CLOSED event',
+    );
+  }
+
+  const closeEvent = closeEvents[0]!;
+  const settledInterestFen = closeEvent.closeSettlement?.accruedInterestFen;
+  if (
+    settledInterestFen == null ||
+    !Number.isSafeInteger(settledInterestFen) ||
+    settledInterestFen < 0
+  ) {
+    throw new AppError(
+      ErrorCode.INVALID_STATE,
+      'LOAN_CLOSED event has invalid settlement snapshot',
+    );
+  }
+  return closeEvent;
+}
+
 export function deriveLoanSummary(
   loan: Loan,
   events: LoanEvent[],
   asOfDate: string,
 ): LoanSummary {
+  const closeEvent = closeEventForLoan(loan, events);
+  const currentRate = currentRateSnapshot(events, asOfDate);
+
+  if (closeEvent && asOfDate >= closeEvent.effectiveDate) {
+    return {
+      loanId: loan._id,
+      lenderUserId: loan.lenderUserId,
+      borrowerUserId: loan.borrowerUserId,
+      status: loan.status,
+      principalFen: 0,
+      interestFen: 0,
+      totalFen: 0,
+      todayInterestFen: 0,
+      currentRate,
+      asOfDate,
+      closeEffectiveDate: closeEvent.effectiveDate,
+      settledInterestFen: closeEvent.closeSettlement!.accruedInterestFen,
+    };
+  }
+
   const input = toInterestInput(events, asOfDate);
   const balance = computeBalance(input);
   const todayInterestFen = interestGrowthOn(input, previousDay(asOfDate));
@@ -159,12 +217,15 @@ export function deriveLoanSummary(
     loanId: loan._id,
     lenderUserId: loan.lenderUserId,
     borrowerUserId: loan.borrowerUserId,
+    status: loan.status,
     principalFen: balance.principalFen,
     interestFen: balance.interestFen,
     totalFen: balance.totalDueFen,
     todayInterestFen,
-    currentRate: currentRateSnapshot(events, asOfDate),
+    currentRate,
     asOfDate,
+    closeEffectiveDate: closeEvent?.effectiveDate ?? null,
+    settledInterestFen: closeEvent?.closeSettlement!.accruedInterestFen ?? null,
   };
 }
 

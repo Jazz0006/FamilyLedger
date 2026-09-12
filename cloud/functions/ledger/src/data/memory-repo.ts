@@ -328,6 +328,13 @@ class MemoryTransaction implements LedgerTransaction {
     return cloneValue(created);
   }
 
+  async putLoan(loan: Loan): Promise<void> {
+    if (!this.state.loans.has(loan._id)) {
+      throw new AppError(ErrorCode.NOT_FOUND, 'Loan not found');
+    }
+    this.state.loans.set(loan._id, cloneValue(loan));
+  }
+
   async listLoanEvents(params: {
     loanId: string;
     page: PageInput;

@@ -11,6 +11,10 @@ import {
 import { AppError, ErrorCode } from '../errors.js';
 import { eventIdempotencyKey } from '../data/event-idempotency.js';
 import type { NewLoanEvent } from '../data/repo.js';
+import {
+  assertPrincipalTimelineNonNegative,
+  principalDeltaForEvent,
+} from '../domain/principal-timeline.js';
 import type { ActionContext } from './action-context.js';
 import {
   createKnownLoanChangeRequest,
@@ -113,19 +117,6 @@ export async function createCorrectionRequest(
   });
 }
 
-function principalDelta(event: LoanEvent): number | null {
-  switch (event.eventType) {
-    case LoanEventType.PRINCIPAL_ADD:
-      return event.amountFen == null ? null : event.amountFen;
-    case LoanEventType.PRINCIPAL_REPAY:
-      return event.amountFen == null ? null : -Math.abs(event.amountFen);
-    case LoanEventType.CORRECTION:
-      return event.amountFen != null && event.rate == null ? event.amountFen : null;
-    default:
-      return null;
-  }
-}
-
 function isRateAffecting(event: LoanEvent): boolean {
   return (
     (event.eventType === LoanEventType.RATE_CHANGE ||
@@ -150,7 +141,7 @@ function requireTarget(
 }
 
 function assertPrincipalTarget(target: LoanEvent): void {
-  if (principalDelta(target) == null) {
+  if (principalDeltaForEvent(target) == null) {
     throw new AppError(
       ErrorCode.VALIDATION_ERROR,
       'PRINCIPAL correction must target a principal-affecting event',
@@ -185,37 +176,6 @@ function assertRateTargetIsCurrentWinner(
   }
 }
 
-function assertHistoricalPrincipalNonNegative(
-  currentEvents: LoanEvent[],
-  candidate: NewLoanEvent,
-): void {
-  const rows = [...currentEvents, { ...candidate, _id: '__candidate__' } as LoanEvent]
-    .map((event) => ({ event, delta: principalDelta(event) }))
-    .filter((row): row is { event: LoanEvent; delta: number } => row.delta != null)
-    .sort((a, b) => {
-      if (a.event.effectiveDate !== b.event.effectiveDate) {
-        return a.event.effectiveDate < b.event.effectiveDate ? -1 : 1;
-      }
-      return a.event.sequence - b.event.sequence;
-    });
-
-  let principalFen = 0;
-  let index = 0;
-  while (index < rows.length) {
-    const date = rows[index]!.event.effectiveDate;
-    while (index < rows.length && rows[index]!.event.effectiveDate === date) {
-      principalFen += rows[index]!.delta;
-      index += 1;
-    }
-    if (principalFen < 0) {
-      throw new AppError(
-        ErrorCode.CONFLICT,
-        `Correction would make principal negative after ${date}`,
-      );
-    }
-  }
-}
-
 export function buildCorrectionFormalEvent(params: {
   request: LedgerRequest & { loanId: string; payload: CorrectionPayload };
   actorUserId: string;
@@ -247,7 +207,7 @@ export function buildCorrectionFormalEvent(params: {
       ...base,
       amountFen: params.request.payload.principalDeltaFen,
     };
-    assertHistoricalPrincipalNonNegative(params.currentEvents, candidate);
+    assertPrincipalTimelineNonNegative(params.currentEvents, candidate);
     return candidate;
   }
 

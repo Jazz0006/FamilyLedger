@@ -76,11 +76,6 @@ function stripLoanRecord(record: LoanRecord): Loan {
   return loan;
 }
 
-/**
- * node-sdk's database get() caps one page at 100 records. To avoid limit+1
- * overflowing that cap, a full page advertises a next cursor. If the full page
- * happened to be the final exact multiple, the next read returns an empty page.
- */
 function pageFromCreatedAtRows<T extends { createdAt: number; _id: string }>(
   rows: T[],
   limit: number,
@@ -96,10 +91,7 @@ function pageFromCreatedAtRows<T extends { createdAt: number; _id: string }>(
   };
 }
 
-function eventPage(
-  items: LoanEvent[],
-  limit: number,
-): Page<LoanEvent> {
+function eventPage(items: LoanEvent[], limit: number): Page<LoanEvent> {
   const last = items[items.length - 1];
   return {
     items,
@@ -336,6 +328,14 @@ class CloudBaseTransaction implements LedgerTransaction {
     return { ...loan, _id: extractAddedId(response) };
   }
 
+  async putLoan(loan: Loan): Promise<void> {
+    // Partial update preserves the infrastructure-only nextEventSequence field.
+    await this.transaction
+      .collection(Collections.LOANS)
+      .doc(loan._id)
+      .update(withoutId(loan));
+  }
+
   async listLoanEvents(
     params: Parameters<LedgerTransaction['listLoanEvents']>[0],
   ): Promise<Page<LoanEvent>> {
@@ -417,7 +417,6 @@ class CloudBaseTransaction implements LedgerTransaction {
   }
 }
 
-/** CloudBase duplicate-key normalization for unique-index backed invariants. */
 function isDuplicateKeyError(error: unknown): boolean {
   const candidate = error as { code?: string | number; message?: string };
   const code = String(candidate?.code ?? '');
