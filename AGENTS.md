@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## Evidence-first engineering policy (2026-10-15; current validation default)
+
+- Define independent observable acceptance, risk and ownership first. **Do not require new tests or a synthetic failing RED/GREEN phase for every change.** Early failing tests are an optional technique when they make implementation safer or faster, not a universal entry criterion.
+- Select the cheapest convincing evidence: existing tests, focused durable domain/integration tests, real browser/simulator/device workflows, inspected API/log evidence, type/build/static analysis, and exact diffs. Do not accept self-authored passing AI tests as sole proof of product correctness.
+- Add/retain automated regression tests for meaningful deterministic contracts and repeatable defects; avoid duplicate assertions and tests locked to incidental implementation shape. Retire obsolete tests only when the protected behavior is no longer needed or stronger coverage remains.
+- Money arithmetic, interest, authorization, idempotency, consent, transactions and balance reconstruction require stable repeatable automated evidence before acceptance; test timing is a choice, not a ritual.
+- Maintain existing CI and release gates, core correctness, safety and independent acceptance. This policy overrides older prose implying that RED/GREEN must precede each source edit.
+
+
 Engineering guardrails for `Jazz0006/FamilyLedger`.
 
 This file exists to keep the codebase small, understandable, and safe as the product moves from the original family-only model to the v2 general bilateral ledger model.
@@ -251,7 +260,7 @@ Tests are mandatory for code that can materially affect:
 - transaction/concurrency-sensitive flows;
 - event-to-balance reconstruction.
 
-Prefer tests-first for those areas.
+Prefer independent, durable automated coverage for those areas; test-first is optional when it adds value, but adequate risk-based verification is mandatory before acceptance.
 
 UI styling and trivial rendering do not require exhaustive unit tests.
 
