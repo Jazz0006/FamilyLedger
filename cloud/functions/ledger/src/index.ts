@@ -1,105 +1,29 @@
-import { buildContext } from './context.js';
-import { AppError, ErrorCode, type ApiResponse } from './errors.js';
-import { CloudBaseRepo } from './data/cloudbase-repo.js';
-import { makeActionContext } from './actions/action-context.js';
-import { getHomeSummary } from './actions/getHomeSummary.js';
-import {
-  bootstrapAdmin,
-  type BootstrapAdminInput,
-} from './actions/bootstrapAdmin.js';
-import {
-  createInvite,
-  previewInvite,
-  type CreateInviteInput,
-  type PreviewInviteInput,
-} from './actions/invites.js';
-import { bindInvite, type BindInviteInput } from './actions/bindInvite.js';
-import {
-  recordLodgment,
-  type RecordLodgmentInput,
-} from './actions/recordLodgment.js';
-import {
-  proposeRepayment,
-  type ProposeRepaymentInput,
-} from './actions/proposeRepayment.js';
-import { confirmChange, type ConfirmChangeInput } from './actions/confirmChange.js';
-import { setupCollections } from './actions/setupCollections.js';
+import { ErrorCode, type ApiResponse } from './errors.js';
 
-/**
- * Single router-style cloud function. The miniprogram calls
- * wx.cloud.callFunction({ name: 'ledger', data: { action, payload } }).
- *
- * Every action is server-authoritative: identity comes from the CloudBase
- * WeChat context (never the client), and all money/permission logic runs here
- * (spec §14). Errors are returned as a stable { ok:false, code } envelope so
- * the UI can render friendly, elder-readable messages.
- */
 type Event = {
   action?: string;
   payload?: unknown;
 };
 
+/**
+ * R1 clean-rewrite boundary.
+ *
+ * The v1.1 family/admin actions were intentionally removed instead of being
+ * kept behind compatibility branches. New v2 server actions are introduced in
+ * later rewrite milestones after the v2 domain/repository foundations exist.
+ *
+ * Keeping an explicit disabled router is safer than accidentally deploying the
+ * old unilateral-write semantics while the product is being rebuilt.
+ */
 export async function main(
   event: Event,
-  fnContext: unknown,
-): Promise<ApiResponse<unknown>> {
-  try {
-    const call = buildContext(fnContext);
-    const ctx = makeActionContext({
-      repo: new CloudBaseRepo(call.db),
-      openid: call.openid,
-      now: call.now,
-    });
-    const { action, payload } = event ?? {};
-
-    switch (action) {
-      // One-time infra bootstrap: needs the raw db handle, runs before any
-      // admin/collections exist, so it takes `call` not `ctx`.
-      case 'setupCollections':
-        return ok(await setupCollections(call));
-      case 'getHomeSummary':
-        return ok(await getHomeSummary(ctx));
-      case 'bootstrapAdmin':
-        return ok(await bootstrapAdmin(ctx, payload as BootstrapAdminInput));
-      case 'createInvite':
-        return ok(await createInvite(ctx, payload as CreateInviteInput));
-      case 'previewInvite':
-        return ok(await previewInvite(ctx, payload as PreviewInviteInput));
-      case 'bindInvite':
-        return ok(await bindInvite(ctx, payload as BindInviteInput));
-      case 'recordLodgment':
-        return ok(await recordLodgment(ctx, payload as RecordLodgmentInput));
-      case 'proposeRepayment':
-        return ok(await proposeRepayment(ctx, payload as ProposeRepaymentInput));
-      case 'confirmChange':
-        return ok(await confirmChange(ctx, payload as ConfirmChangeInput));
-      default:
-        throw new AppError(
-          ErrorCode.INVALID_ARGUMENT,
-          `Unknown action: ${String(action)}`,
-        );
-    }
-  } catch (err) {
-    return toErrorResponse(err);
-  }
+  _fnContext: unknown,
+): Promise<ApiResponse<never>> {
+  return {
+    ok: false,
+    code: ErrorCode.INVALID_STATE,
+    message: `v2 rewrite in progress; action unavailable: ${String(event?.action)}`,
+  };
 }
 
-function ok<T>(data: T): ApiResponse<T> {
-  return { ok: true, data };
-}
-
-function toErrorResponse(err: unknown): ApiResponse<never> {
-  if (err instanceof AppError) {
-    return { ok: false, code: err.code, message: err.message };
-  }
-  const message = err instanceof Error ? err.message : String(err);
-  // Map a couple of thrown sentinel strings to codes; default to INTERNAL.
-  if (message.startsWith('UNAUTHENTICATED')) {
-    return { ok: false, code: ErrorCode.UNAUTHENTICATED, message };
-  }
-  return { ok: false, code: ErrorCode.INTERNAL, message };
-}
-
-// CloudBase expects a CommonJS-style `exports.main`. With ESM output the named
-// export is picked up by the runtime; keep `main` as the entry.
 export default { main };

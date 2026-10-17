@@ -1,31 +1,35 @@
 # Miniprogram (WeChat native)
 
-Display + request-initiation only. It never computes balances or writes the
-ledger — it renders server-computed 分 amounts (spec §14, §18).
+## Rewrite status
 
-## Open in WeChat DevTools
+The files currently under `miniprogram/pages/` are the old v1.1 family/admin UI and are **temporary reference only** during the v2 clean rewrite.
 
-1. Open [WeChat Developer Tools](https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html).
-2. Import this `miniprogram/` directory as a Mini Program project.
-3. Replace the `appid` placeholder (`touristappid`) in `project.config.json`
-   with your real AppID, and set the CloudBase env in `app.js`.
+Do not extend their assumptions:
 
-## Pages (spec §17)
+- no fixed administrator;
+- no family-wide privileged view;
+- no global borrower/lender role;
+- no admin-only direct ledger writes;
+- no v1 bind/bootstrap flow.
 
-| Page | User | Purpose |
-|---|---|---|
-| `pages/bind` | member | one-tap 首次邀请绑定 |
-| `pages/home` | member | 当前应还 / 本金 / 利息 / 今日增长 / 全家概览 |
-| `pages/detail` | member | own transaction history (private) |
-| `pages/confirm` | member / 曾骏 | confirm or reject pending changes |
-| `pages/admin-family` | 曾骏 | family total + member cards |
-| `pages/admin-account` | 曾骏 | one account's events + propose add/repay |
-| `pages/admin-invites` | 曾骏 | create / resend one-time invites |
+They will be replaced when the v2 server flows reach the UI milestones. Until then the active source of truth for product behavior is `docs/来往账_产品规划设计书_v2.0.md`, not the existing page structure.
 
-## Shared calc engine
+## Target v2 responsibilities
 
-`@family-ledger/calc` is the single source of truth for money math. If a screen
-ever needs a live-ticking local estimate of "今日增加", do NOT re-implement the
-formula here — bundle the built `packages/calc/dist` into the miniprogram (e.g.
-via a `miniprogram_npm` build step) so frontend and backend stay byte-identical.
-For V1 the home screen simply displays the server's computed figures.
+The Mini Program will own display, input, navigation, proposal initiation, and consent actions. It must not own authoritative identity, permissions, request transitions, formal event creation, or money truth.
+
+Target user-facing flows include:
+
+- normal user entry / account bootstrap;
+- bidirectional home summary: 别人欠我的 / 我欠别人的 / 待我确认;
+- create record: 我借给别人 / 我向别人借;
+- first-contact invite acceptance and initiator verification;
+- Loan details and formal event history;
+- repayment / principal-add / rate-change / correction requests;
+- accept / reject / cancel pending requests.
+
+`@family-ledger/calc` remains the single source of truth for money math. Do not reimplement interest formulas in page code.
+
+## Development note
+
+During R1 the cloud router is deliberately disabled while the v2 server foundation is rebuilt, so the legacy pages are not expected to form a working end-to-end product on the rewrite branch.

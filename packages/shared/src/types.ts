@@ -1,131 +1,190 @@
 import type {
-  ChangeRequestStatus,
-  ChangeRequestType,
-  CompoundingMode,
-  LoanAccountStatus,
+  InviteStatus,
+  LedgerRequestStatus,
+  LedgerRequestType,
   LoanEventType,
-  UserRole,
+  LoanStatus,
+  RateSource,
 } from './enums.js';
 
-/**
- * A calendar date in the ledger timezone, as an ISO date string `YYYY-MM-DD`.
- * Interest day boundaries are computed from this in Asia/Shanghai. We store a
- * plain date (not a timestamp) so effective dates are unambiguous.
- */
+export type UserId = string;
+export type LoanId = string;
+export type RequestId = string;
+export type EventId = string;
+export type InviteId = string;
+
+/** Calendar date in the ledger timezone, formatted YYYY-MM-DD. */
 export type IsoDate = string;
 
-/** Server timestamp, epoch milliseconds (UTC). */
+/** Trusted server timestamp, epoch milliseconds UTC. */
 export type EpochMillis = number;
 
-/** Money is always integer 分 (cents). Never a float. (spec Rule G) */
+/** Integer Chinese cents. Business validation must also require safe integer. */
 export type Fen = number;
 
+/** Decimal string, for example "0.026" for 2.6%. */
+export type AnnualEffectiveRate = string;
+
 export interface User {
-  _id: string;
+  _id: UserId;
   openid: string;
   displayName: string;
-  role: UserRole;
-  familyId: string;
-  boundAt: EpochMillis | null;
-}
-
-export interface LoanAccount {
-  _id: string;
-  familyId: string;
-  lenderUserId: string;
-  borrowerUserId: string;
-  currency: string;
-  status: LoanAccountStatus;
-}
-
-export interface LoanTerm {
-  _id: string;
-  loanId: string;
-  /** Annual effective rate as a decimal string, e.g. "0.05". */
-  annualEffectiveRate: string;
-  compounding: CompoundingMode;
-  effectiveFrom: IsoDate;
-  createdBy: string;
-  confirmedAt: EpochMillis;
-}
-
-export interface ChangeRequest {
-  _id: string;
-  loanId: string;
-  type: ChangeRequestType;
-  /** Present for principal changes; null for pure rate changes. */
-  amountFen: Fen | null;
-  /** For RATE_CHANGE requests: proposed new annual effective rate string. */
-  proposedRate?: string;
-  proposedEffectiveDate: IsoDate;
-  requestedBy: string;
-  requiredConfirmer: string;
-  status: ChangeRequestStatus;
-  /** Client-generated UUID; unique index prevents double-submit (spec §15). */
-  idempotencyKey: string;
+  avatarUrl?: string | null;
   createdAt: EpochMillis;
-  resolvedAt: EpochMillis | null;
+  updatedAt: EpochMillis;
 }
 
-/**
- * Immutable ledger event. Never updated or deleted (spec Rule C).
- * `amountFen` meaning depends on eventType; `rate` present for RATE_CHANGE.
- */
+export interface Loan {
+  _id: LoanId;
+  lenderUserId: UserId;
+  borrowerUserId: UserId;
+  currency: 'CNY';
+  ledgerTimezone: 'Asia/Shanghai';
+  createdFromRequestId: RequestId;
+  status: LoanStatus;
+  createdAt: EpochMillis;
+  closedAt: EpochMillis | null;
+}
+
+export interface RateSnapshot {
+  annualEffectiveRate: AnnualEffectiveRate;
+  rateSource: RateSource;
+  rateReferenceYear?: number | null;
+  rateReferenceLabel?: string | null;
+}
+
+export interface CreateLoanPayload {
+  borrowerUserId: UserId | null;
+  lenderUserId: UserId | null;
+  unknownPartyRole: 'BORROWER' | 'LENDER' | null;
+  initialPrincipalFen: Fen;
+  rate: RateSnapshot;
+  proposedEffectiveDate: IsoDate;
+  note?: string | null;
+}
+
+export interface PrincipalAddPayload {
+  amountFen: Fen;
+  proposedEffectiveDate: IsoDate;
+  note?: string | null;
+}
+
+export interface PrincipalRepayPayload {
+  amountFen: Fen;
+  proposedEffectiveDate: IsoDate;
+  note?: string | null;
+}
+
+export interface RateChangePayload {
+  rate: RateSnapshot;
+  proposedEffectiveDate: IsoDate;
+  note?: string | null;
+}
+
+export interface CorrectionPayload {
+  targetEventId: EventId;
+  principalDeltaFen?: Fen;
+  replacementRate?: RateSnapshot;
+  proposedEffectiveDate: IsoDate;
+  reason?: string | null;
+}
+
+export interface CloseLoanPayload {
+  proposedEffectiveDate: IsoDate;
+  note?: string | null;
+}
+
+export type LedgerRequestPayload =
+  | CreateLoanPayload
+  | PrincipalAddPayload
+  | PrincipalRepayPayload
+  | RateChangePayload
+  | CorrectionPayload
+  | CloseLoanPayload;
+
+export interface LedgerRequest {
+  _id: RequestId;
+  type: LedgerRequestType;
+  loanId: LoanId | null;
+  proposerUserId: UserId;
+  counterpartyUserId: UserId | null;
+  payload: LedgerRequestPayload;
+  status: LedgerRequestStatus;
+  requiresInitiatorVerify: boolean;
+  idempotencyKey: string;
+  requestFingerprint: string;
+  createdAt: EpochMillis;
+  updatedAt: EpochMillis;
+  resolvedAt: EpochMillis | null;
+  expiresAt: EpochMillis | null;
+}
+
 export interface LoanEvent {
-  _id: string;
-  loanId: string;
+  _id: EventId;
+  loanId: LoanId;
   eventType: LoanEventType;
   amountFen: Fen | null;
-  /** For RATE_CHANGE: new annual effective rate as a decimal string. */
-  rate?: string;
+  rate?: RateSnapshot;
+  targetEventId?: EventId | null;
   effectiveDate: IsoDate;
-  /** The change_request that produced this event (null for genesis/system). */
-  sourceRequestId: string | null;
-  createdBy: string;
-  confirmedBy: string;
-  createdAt: EpochMillis;
-  /**
-   * Dedupe guard. For confirmation-gated events this equals the source
-   * request's idempotencyKey; for direct admin events (PRINCIPAL_ADD,
-   * RATE_CHANGE) it is the client-supplied key. A unique index on this field
-   * prevents double-tap / retry from inserting a second event (spec §15).
-   */
+  sourceRequestId: RequestId;
+  createdBy: UserId;
+  confirmedBy: UserId;
+  sequence: number;
   idempotencyKey: string;
-  /** For forward migration safety. */
-  schemaVersion: number;
+  createdAt: EpochMillis;
+  schemaVersion: 2;
 }
 
-/**
- * One-time first-bind invite (spec §7). We store only the token HASH, never the
- * raw token (spec §15). With auto-create-on-bind, the invited user + loan
- * account do not exist yet — the invite carries what's needed to create them
- * when the family member taps "确认是我". `consumedUserId` records which user
- * the (single) successful bind created.
- */
 export interface InviteToken {
-  _id: string;
-  familyId: string;
-  /** Display name the invited member will see and be created with (妈妈/爸爸…). */
-  displayName: string;
-  /** Role the created account will have. V1 invites are for lenders. */
-  role: UserRole;
+  _id: InviteId;
+  requestId: RequestId;
   tokenHash: string;
-  expiresAt: EpochMillis;
-  usedAt: EpochMillis | null;
-  /** The user account created by the successful bind, once consumed. */
-  consumedUserId: string | null;
-  createdBy: string;
+  status: InviteStatus;
+  createdByUserId: UserId;
+  claimedByUserId: UserId | null;
   createdAt: EpochMillis;
+  claimedAt: EpochMillis | null;
+  expiresAt: EpochMillis;
+  revokedAt: EpochMillis | null;
 }
 
 export interface AuditLog {
   _id: string;
   actorOpenId: string | null;
-  actorUserId: string | null;
+  actorUserId: UserId | null;
   action: string;
   targetId: string | null;
-  requestId: string | null;
+  requestId: RequestId | null;
   result: 'OK' | 'DENIED' | 'ERROR';
   detail?: string;
   serverTime: EpochMillis;
+}
+
+export interface UserHomeSummary {
+  receivable: {
+    principalFen: Fen;
+    interestFen: Fen;
+    totalFen: Fen;
+    loanCount: number;
+  };
+  payable: {
+    principalFen: Fen;
+    interestFen: Fen;
+    totalFen: Fen;
+    loanCount: number;
+  };
+  pendingRequestCount: number;
+}
+
+export interface LoanSummary {
+  loanId: LoanId;
+  lenderUserId: UserId;
+  borrowerUserId: UserId;
+  principalFen: Fen;
+  interestFen: Fen;
+  totalFen: Fen;
+  todayInterestFen: Fen;
+  currentRate: RateSnapshot;
+  asOfDate: IsoDate;
 }

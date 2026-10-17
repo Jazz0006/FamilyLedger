@@ -1,34 +1,16 @@
-import {
-  DAYS_PER_YEAR,
-  DEFAULT_ANNUAL_EFFECTIVE_RATE,
-  type IsoDate,
-} from '@family-ledger/shared';
+import { DAYS_PER_YEAR, type IsoDate } from '@family-ledger/shared';
 import { Decimal, toFen } from './decimal-config.js';
 import { daysBetween, isOnOrBefore } from './dates.js';
 
 /**
  * Derive the daily compounding rate from an annual effective rate.
- * r = (1 + annual)^(1/365) - 1  (spec Rule D).
- * Held at full Decimal precision — never pre-rounded.
+ * r = (1 + annual)^(1/365) - 1.
  */
 export function dailyRate(annualEffectiveRate: string): Decimal {
   const annual = new Decimal(annualEffectiveRate);
   return annual.plus(1).pow(new Decimal(1).div(DAYS_PER_YEAR)).minus(1);
 }
 
-/**
- * The inputs the interest engine needs, expressed purely as confirmed ledger
- * facts. The engine is deterministic and side-effect free: given the same
- * segments and asOf date it always returns the same 分 amounts.
- *
- * DAY-BOUNDARY CONVENTION (pinned):
- *   A principal that becomes effective on date D accrues its FIRST day of
- *   interest for the transition D -> D+1. Therefore on date == effectiveDate
- *   the elapsed day count is 0 and the balance equals the bare principal
- *   (spec §11: "新本金只从其生效日起参与计息" — interpreted as: present from
- *   the effective date, first growth realised the following day). Repayments
- *   effective on date D stop accruing from D onward (same convention).
- */
 export interface PrincipalSegment {
   /** Signed principal delta in 分: positive add, negative repayment. */
   deltaFen: number;
@@ -42,50 +24,50 @@ export interface RatePeriod {
 
 export interface InterestInput {
   principalSegments: PrincipalSegment[];
-  /** Ordered rate periods. If empty, DEFAULT_ANNUAL_EFFECTIVE_RATE is used. */
-  ratePeriods?: RatePeriod[];
+  /**
+   * v2 requires explicit confirmed rate history. CREATE_LOAN writes an initial
+   * RATE_CHANGE event, including when the agreed rate is zero.
+   */
+  ratePeriods: RatePeriod[];
   /** The date to value the balance at (inclusive). */
   asOf: IsoDate;
 }
 
 export interface BalanceBreakdown {
-  /** Sum of signed principal deltas effective on/before asOf, in 分. */
   principalFen: number;
-  /** Accrued interest in 分 = totalDue - principal. */
   interestFen: number;
-  /** Current amount 曾骏 owes, in 分 (principal + interest). */
   totalDueFen: number;
 }
 
 /**
- * Compute the amount due at `asOf` by compounding each principal segment
- * forward day-by-day at the applicable daily rate, at FULL precision, and
- * quantising to 分 exactly once at the end (spec §18 determinism).
- *
- * V1 assumes a single flat rate for the whole loan (the common case). Rate
- * changes are modelled by `ratePeriods`; if multiple periods are supplied the
- * daily rate is selected per-day by effective date.
+ * Compute the amount due at `asOf` from confirmed principal/rate history.
+ * There is deliberately no product-level fallback rate in v2: a missing rate
+ * history is invalid ledger state and must fail loudly rather than silently
+ * applying the old v1.1 5% default.
  */
 export function computeBalance(input: InterestInput): BalanceBreakdown {
   const { asOf } = input;
-  const ratePeriods =
-    input.ratePeriods && input.ratePeriods.length > 0
-      ? [...input.ratePeriods].sort((a, b) =>
-          a.effectiveFrom < b.effectiveFrom ? -1 : 1,
-        )
-      : [{ annualEffectiveRate: DEFAULT_ANNUAL_EFFECTIVE_RATE, effectiveFrom: '0000-01-01' }];
+  if (input.ratePeriods.length === 0) {
+    throw new Error('Missing confirmed rate history');
+  }
 
-  // Precompute daily rate per period.
+  const ratePeriods = [...input.ratePeriods].sort((a, b) =>
+    a.effectiveFrom < b.effectiveFrom ? -1 : a.effectiveFrom > b.effectiveFrom ? 1 : 0,
+  );
+
   const dailyByPeriod = ratePeriods.map((p) => ({
     from: p.effectiveFrom,
     r: dailyRate(p.annualEffectiveRate),
   }));
 
   const rateForDate = (date: IsoDate): Decimal => {
-    let chosen = dailyByPeriod[0]!.r;
+    let chosen: Decimal | null = null;
     for (const p of dailyByPeriod) {
       if (isOnOrBefore(p.from, date)) chosen = p.r;
       else break;
+    }
+    if (chosen == null) {
+      throw new Error(`No confirmed rate is effective on ${date}`);
     }
     return chosen;
   };
@@ -100,11 +82,13 @@ export function computeBalance(input: InterestInput): BalanceBreakdown {
   for (const seg of segments) {
     principalFen += seg.deltaFen;
     const days = daysBetween(seg.effectiveDate, asOf);
-    // Compound this segment's delta forward over its lifetime. When rate is
-    // flat this is delta * (1+r)^days; with rate periods we step day-by-day.
     let value = new Decimal(seg.deltaFen);
+
     if (dailyByPeriod.length === 1) {
-      value = value.mul(dailyByPeriod[0]!.r.plus(1).pow(days));
+      // Validate that the one confirmed rate is actually effective for this
+      // segment before taking the flat-rate fast path.
+      const r = rateForDate(seg.effectiveDate);
+      value = value.mul(r.plus(1).pow(days));
     } else {
       let cursor = seg.effectiveDate;
       for (let i = 0; i < days; i++) {
@@ -130,9 +114,8 @@ function addOneDay(date: IsoDate): IsoDate {
 }
 
 /**
- * "今日增加" (spec §11): interest growth realised between yesterday and asOf,
- * separated from any principal change so a new 20,000 add is never mislabelled
- * as today's interest. Returns the pure interest delta in 分.
+ * Interest growth realised between `previousDate` and `input.asOf`, excluding
+ * same-day principal movement from the reported interest delta.
  */
 export function interestGrowthOn(
   input: InterestInput,
@@ -140,8 +123,7 @@ export function interestGrowthOn(
 ): number {
   const today = computeBalance(input);
   const yesterday = computeBalance({ ...input, asOf: previousDate });
-  const todayInterestOnPriorPrincipal =
-    today.totalDueFen - today.principalFen;
+  const todayInterestOnPriorPrincipal = today.totalDueFen - today.principalFen;
   const yesterdayInterest = yesterday.totalDueFen - yesterday.principalFen;
   return todayInterestOnPriorPrincipal - yesterdayInterest;
 }

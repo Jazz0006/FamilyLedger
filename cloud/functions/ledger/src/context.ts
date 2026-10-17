@@ -2,8 +2,8 @@ import cloudbase from '@cloudbase/node-sdk';
 
 /**
  * Server-side request context. The OPENID is taken from the CloudBase runtime,
- * NOT from anything the client sends — the client cannot spoof identity, and
- * roles are looked up server-side from the `users` collection (spec §15).
+ * never from client payload. v2 permissions are derived server-side from the
+ * authenticated User plus the relevant Loan/Request relationship.
  */
 export interface CallContext {
   openid: string;
